@@ -51,8 +51,8 @@ export function WorkoutDetailSheet({
                     )}
                   </div>
 
-                  <div className="mt-2 grid grid-cols-[20px_1fr_1fr_44px_40px] gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    <span>Set</span>
+                  <div className="mt-2 grid grid-cols-[28px_1fr_1fr_44px_40px] gap-2 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <span className="text-center">Set</span>
                     <span>Weight</span>
                     <span>Reps</span>
                     <span className="text-center">Rest</span>
@@ -62,11 +62,11 @@ export function WorkoutDetailSheet({
                     {log.sets.map((set, i) => (
                       <div
                         key={set.id}
-                        className={`grid grid-cols-[20px_1fr_1fr_44px_40px] items-center gap-1.5 rounded-md px-1 py-1 text-xs ${
+                        className={`grid grid-cols-[28px_1fr_1fr_44px_40px] items-center gap-2 rounded-md px-2.5 py-1 text-xs ${
                           set.done ? "bg-primary/10" : "opacity-60"
                         }`}
                       >
-                        <span className="font-semibold text-muted-foreground">{i + 1}</span>
+                        <span className="text-center font-semibold text-muted-foreground">{i + 1}</span>
                         <span className="num font-semibold">{set.weight}<span className="text-[9px] font-normal text-muted-foreground"> kg</span></span>
                         <span className="num font-semibold">{set.reps}<span className="text-[9px] font-normal text-muted-foreground"> reps</span></span>
                         <span className="num text-center text-muted-foreground">
