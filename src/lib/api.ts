@@ -1183,8 +1183,12 @@ export async function updateRoutine(routineId: string, draft: RoutineDraft) {
   const { error } = await supabase.rpc("update_routine_with_exercises", {
     p_routine_id: routineId,
     p_name: draft.name,
-    p_description: draft.description ?? null,
-    p_schedule: draft.schedule ?? null,
+    // Supabase's RPC type-gen flags function args as non-nullable even when
+    // the Postgres parameter accepts NULL. Empty string is equivalent here:
+    // the client reads `description ?? ""` everywhere so "" and NULL look
+    // identical in the UI.
+    p_description: draft.description ?? "",
+    p_schedule: draft.schedule ?? "",
     p_color: draft.color,
     p_exercises: draft.exercises.map((re, i) => ({
       exercise_id: re.exerciseId,
