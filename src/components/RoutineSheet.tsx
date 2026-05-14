@@ -40,7 +40,7 @@ export function RoutineSheet({
   routine?: Routine | null
 }) {
   const { user } = useAuth()
-  const { data: exercises } = useExercises()
+  const { data: exercises, refetch: refetchExercises } = useExercises()
   const isEdit = !!routine
 
   const [name, setName] = React.useState("")
@@ -235,15 +235,21 @@ export function RoutineSheet({
 
       <ExercisePickerSheet
         open={pickerOpen}
-        onOpenChange={setPickerOpen}
+        onOpenChange={(o) => {
+          setPickerOpen(o)
+          // Picker may have created a new exercise; refresh our local cache
+          // so lookup() finds it instead of falling back to "Unknown".
+          if (!o) refetchExercises()
+        }}
         multi
         excludeIds={items.map((i) => i.exerciseId)}
-        onPick={(picked) =>
+        onPick={(picked) => {
           setItems((arr) => [
             ...arr,
             ...picked.map((p) => ({ exerciseId: p.id, sets: 3, targetReps: "8-10" })),
           ])
-        }
+          refetchExercises()
+        }}
       />
 
       <ConfirmDialog
