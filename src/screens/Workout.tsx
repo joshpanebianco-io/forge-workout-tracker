@@ -350,8 +350,8 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
 
               {!isCollapsed && (
                 <div className="px-4 pb-4">
-                  <div className="grid grid-cols-[16px_1fr_1fr_44px_36px_24px_28px] items-center gap-1.5 px-1 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    <span>Set</span>
+                  <div className="grid grid-cols-[28px_1fr_1fr_44px_36px_24px_28px] items-center gap-2 px-2.5 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <span className="text-center">Set</span>
                     <span>Weight</span>
                     <span>Reps</span>
                     <span className="text-center">Rest</span>
@@ -461,11 +461,11 @@ function SetRow({
   return (
     <div
       className={cn(
-        "grid grid-cols-[16px_1fr_1fr_44px_36px_24px_28px] items-center gap-1.5 rounded-lg px-1 py-1.5 transition-colors",
+        "grid grid-cols-[28px_1fr_1fr_44px_36px_24px_28px] items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors",
         set.done && "bg-primary/10"
       )}
     >
-      <span className={cn("text-xs font-semibold", set.done ? "text-primary" : "text-muted-foreground")}>{index}</span>
+      <span className={cn("text-center text-xs font-semibold", set.done ? "text-primary" : "text-muted-foreground")}>{index}</span>
       <button
         onClick={onEdit}
         className="num flex items-baseline gap-0.5 rounded-md px-1 py-0.5 text-left text-sm font-semibold hover:bg-secondary/60"
