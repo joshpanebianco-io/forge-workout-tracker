@@ -1,6 +1,6 @@
 import * as React from "react"
 import {
-  Settings, Bell, Sun, Moon, Monitor, Download, Share2, HelpCircle, LogOut, ChevronRight, Weight, Target, Calendar,
+  Settings, Bell, Sun, Moon, Monitor, Download, Share2, LogOut, ChevronRight, Weight, Target, Calendar,
 } from "lucide-react"
 import { ScreenHeader } from "@/components/ScreenHeader"
 import { Card } from "@/components/ui/card"
@@ -100,14 +100,10 @@ export function Profile() {
           />
           <Row icon={<Calendar />} label="Week starts on" hint="Monday" disabled />
           <Row icon={<Download />} label="Export data" hint="Coming soon" disabled />
-          <Row icon={<Share2 />} label="Share profile" disabled />
+          <Row icon={<Share2 />} label="Share profile" hint="Coming soon" disabled />
         </Card>
 
-        <h2 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Support
-        </h2>
-        <Card className="divide-y divide-border/60 p-0">
-          <Row icon={<HelpCircle />} label="Help center" disabled />
+        <Card className="mt-5 p-0">
           <Row icon={<LogOut />} label="Sign out" variant="destructive" onClick={signOut} />
         </Card>
 

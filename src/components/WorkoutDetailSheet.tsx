@@ -51,23 +51,27 @@ export function WorkoutDetailSheet({
                     )}
                   </div>
 
-                  <div className="mt-2 grid grid-cols-[24px_1fr_1fr_56px] gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mt-2 grid grid-cols-[20px_1fr_1fr_44px_40px] gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     <span>Set</span>
                     <span>Weight</span>
                     <span>Reps</span>
+                    <span className="text-center">Rest</span>
                     <span className="text-center">RIR</span>
                   </div>
                   <div className="mt-1 flex flex-col gap-0.5">
                     {log.sets.map((set, i) => (
                       <div
                         key={set.id}
-                        className={`grid grid-cols-[24px_1fr_1fr_56px] items-center gap-2 rounded-md px-1 py-1 text-xs ${
+                        className={`grid grid-cols-[20px_1fr_1fr_44px_40px] items-center gap-1.5 rounded-md px-1 py-1 text-xs ${
                           set.done ? "bg-primary/10" : "opacity-60"
                         }`}
                       >
                         <span className="font-semibold text-muted-foreground">{i + 1}</span>
                         <span className="num font-semibold">{set.weight}<span className="text-[9px] font-normal text-muted-foreground"> kg</span></span>
                         <span className="num font-semibold">{set.reps}<span className="text-[9px] font-normal text-muted-foreground"> reps</span></span>
+                        <span className="num text-center text-muted-foreground">
+                          {set.rest != null && set.rest > 0 ? fmtRest(set.rest) : "—"}
+                        </span>
                         <span className="text-center text-muted-foreground">{set.rpe ?? "—"}</span>
                       </div>
                     ))}
@@ -91,4 +95,11 @@ function StatBox({ icon, label, value }: { icon: React.ReactNode; label: string;
       <p className="num mt-1 text-base font-bold">{value}</p>
     </Card>
   )
+}
+
+function fmtRest(seconds: number) {
+  if (seconds < 60) return `${seconds}s`
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return s === 0 ? `${m}m` : `${m}:${String(s).padStart(2, "0")}`
 }

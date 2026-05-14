@@ -18,16 +18,19 @@ export function SetEditorSheet({
   const open = set !== null
   const [weight, setWeight] = React.useState("")
   const [reps, setReps] = React.useState("")
+  const [rest, setRest] = React.useState("")
   const [rpe, setRpe] = React.useState("")
   const [saving, setSaving] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [confirmDelete, setConfirmDelete] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!set) return
     setWeight(set.weight ? String(set.weight) : "")
     setReps(set.reps ? String(set.reps) : "")
+    setRest(set.rest ? String(set.rest) : "")
     setRpe(set.rpe ? String(set.rpe) : "")
     setError(null)
   }, [set])
@@ -40,6 +43,7 @@ export function SetEditorSheet({
       await updateSet(set.id, {
         weight: Number(weight) || 0,
         reps: Number(reps) || 0,
+        rest: rest ? Math.max(0, Math.round(Number(rest))) : null,
         rpe: rpe ? Number(rpe) : null,
       })
       onSaved()
@@ -54,13 +58,14 @@ export function SetEditorSheet({
   const doDelete = async () => {
     if (!set) return
     setDeleting(true)
+    setDeleteError(null)
     try {
       await deleteSet(set.id)
       setConfirmDelete(false)
       onSaved()
       onOpenChange(false)
     } catch (e: any) {
-      setError(e?.message ?? "Failed to delete")
+      setDeleteError(e?.message ?? "Failed to delete")
     } finally {
       setDeleting(false)
     }
@@ -96,6 +101,14 @@ export function SetEditorSheet({
           integer
         />
         <FieldStepper
+          label="Rest (seconds, optional)"
+          value={rest}
+          onChange={setRest}
+          onMinus={() => adjust(setRest, -15)}
+          onPlus={() => adjust(setRest, 15)}
+          integer
+        />
+        <FieldStepper
           label="RIR (optional)"
           value={rpe}
           onChange={setRpe}
@@ -119,11 +132,12 @@ export function SetEditorSheet({
 
       <ConfirmDialog
         open={confirmDelete}
-        onOpenChange={setConfirmDelete}
+        onOpenChange={(o) => { setConfirmDelete(o); if (!o) setDeleteError(null) }}
         title="Delete this set?"
         description="This set will be permanently removed from the workout."
         confirmLabel="Delete"
         busy={deleting}
+        error={deleteError}
         onConfirm={doDelete}
       />
     </Sheet>

@@ -8,13 +8,14 @@ import type {
 type EquipmentDB = Exercise["equipment"]
 
 function rowToExercise(r: {
-  id: string; name: string; muscle: string; equipment: string
+  id: string; name: string; muscle: string; equipment: string; user_id?: string | null
 }): Exercise {
   return {
     id: r.id,
     name: r.name,
     muscle: r.muscle as MuscleGroup,
     equipment: r.equipment as EquipmentDB,
+    userId: r.user_id ?? null,
   }
 }
 
@@ -54,7 +55,7 @@ export function useExercises() {
   return useAsync<Exercise[]>(async () => {
     const { data, error } = await supabase
       .from("exercises")
-      .select("id, name, muscle, equipment")
+      .select("id, name, muscle, equipment, user_id")
       .order("name")
     if (error) throw error
     return (data ?? []).map(rowToExercise)
@@ -101,7 +102,7 @@ const WORKOUT_SELECT = `
   workout_exercises (
     id, position, notes, exercise_id,
     exercises ( id, name, muscle, equipment ),
-    sets ( id, set_number, weight_kg, reps, rpe, done )
+    sets ( id, set_number, weight_kg, reps, rpe, rest_seconds, done )
   )
 `
 
@@ -120,6 +121,7 @@ function rowToWorkout(w: any): Workout {
             weight: Number(s.weight_kg),
             reps: s.reps,
             rpe: s.rpe ?? undefined,
+            rest: s.rest_seconds ?? undefined,
             done: s.done,
           })
         ),
@@ -520,9 +522,13 @@ export type ProgressPoint = {
   totalSets: number
 }
 
-function epley1RM(weight: number, reps: number) {
+function estimated1RM(weight: number, reps: number) {
   if (weight <= 0 || reps <= 0) return 0
   if (reps === 1) return weight
+  // Brzycki — more conservative than Epley for low-to-mid reps.
+  if (reps <= 10) return (weight * 36) / (37 - reps)
+  // Above 10 reps, Brzycki's denominator drives the estimate too high; fall
+  // back to Epley which is more conservative in that range.
   return weight * (1 + reps / 30)
 }
 
@@ -555,12 +561,14 @@ export function useExerciseProgress(exerciseId: string | null) {
         const r = s.reps
         if (w <= 0 || r <= 0) continue
         totalSets += 1
-        const est = epley1RM(w, r)
-        if (est > topEst) {
-          topEst = est
+        // Top set = heaviest weight, tie-break by reps.
+        if (w > topWeight || (w === topWeight && r > topReps)) {
           topWeight = w
           topReps = r
         }
+        // Est. 1RM = best estimated 1RM across any set in this session.
+        const est = estimated1RM(w, r)
+        if (est > topEst) topEst = est
       }
       if (totalSets === 0) continue
       points.push({
@@ -907,7 +915,10 @@ export async function toggleSetDone(setId: string, done: boolean) {
   if (error) throw error
 }
 
-export async function addSet(workoutExerciseId: string, prev: { weight: number; reps: number } | null) {
+export async function addSet(
+  workoutExerciseId: string,
+  prev: { weight: number; reps: number; rest?: number } | null,
+) {
   const { data: existing, error: countErr } = await supabase
     .from("sets")
     .select("set_number")
@@ -921,6 +932,7 @@ export async function addSet(workoutExerciseId: string, prev: { weight: number; 
     set_number: next,
     weight_kg: prev?.weight ?? 0,
     reps: prev?.reps ?? 8,
+    rest_seconds: prev?.rest ?? null,
     done: false,
   })
   if (error) throw error
@@ -943,8 +955,19 @@ export async function startEmptyWorkout(userId: string, title = "Quick session")
     .insert({ user_id: userId, title })
     .select("id")
     .single()
-  if (error) throw error
+  if (error) {
+    if (isActiveWorkoutConflict(error)) {
+      throw new Error("You already have an active workout. Finish or discard it first.")
+    }
+    throw error
+  }
   return data.id
+}
+
+function isActiveWorkoutConflict(e: unknown): boolean {
+  const err = e as { code?: string; message?: string } | null
+  if (!err) return false
+  return err.code === "23505" && /workouts_one_active_per_user/.test(err.message ?? "")
 }
 
 export async function startWorkoutFromRoutine(routineId: string, userId: string) {
@@ -963,9 +986,18 @@ export async function startWorkoutFromRoutine(routineId: string, userId: string)
     .insert({ user_id: userId, routine_id: routineId, title: routine.name })
     .select("id")
     .single()
-  if (wErr) throw wErr
+  if (wErr) {
+    if (isActiveWorkoutConflict(wErr)) {
+      throw new Error("You already have an active workout. Finish or discard it first.")
+    }
+    throw wErr
+  }
 
   const sortedRe = (routine.routine_exercises ?? []).sort((a: any, b: any) => a.position - b.position)
+  const lastByExercise = await fetchLastSessionSetsByExercise(
+    sortedRe.map((re: any) => re.exercise_id),
+    workout.id,
+  )
   for (const re of sortedRe) {
     const { data: we, error: weErr } = await supabase
       .from("workout_exercises")
@@ -977,13 +1009,19 @@ export async function startWorkoutFromRoutine(routineId: string, userId: string)
       .select("id")
       .single()
     if (weErr) throw weErr
-    const rows = Array.from({ length: re.target_sets }, (_, i) => ({
-      workout_exercise_id: we.id,
-      set_number: i + 1,
-      weight_kg: 0,
-      reps: 0,
-      done: false,
-    }))
+    const lastSets = lastByExercise.get(re.exercise_id)
+    const rows = Array.from({ length: re.target_sets }, (_, i) => {
+      const setNumber = i + 1
+      const prefill = pickPrefillFor(setNumber, lastSets)
+      return {
+        workout_exercise_id: we.id,
+        set_number: setNumber,
+        weight_kg: prefill.weight,
+        reps: prefill.reps,
+        rest_seconds: prefill.rest,
+        done: false,
+      }
+    })
     const { error: sErr } = await supabase.from("sets").insert(rows)
     if (sErr) throw sErr
   }
@@ -999,12 +1037,23 @@ export async function signOut() {
 // ---------------------------------------------------------------------
 export async function updateSet(
   setId: string,
-  patch: { weight?: number; reps?: number; rpe?: number | null }
+  patch: {
+    weight?: number
+    reps?: number
+    rpe?: number | null
+    rest?: number | null
+  }
 ) {
-  const payload: { weight_kg?: number; reps?: number; rpe?: number | null } = {}
+  const payload: {
+    weight_kg?: number
+    reps?: number
+    rpe?: number | null
+    rest_seconds?: number | null
+  } = {}
   if (patch.weight !== undefined) payload.weight_kg = patch.weight
   if (patch.reps !== undefined) payload.reps = patch.reps
   if (patch.rpe !== undefined) payload.rpe = patch.rpe
+  if (patch.rest !== undefined) payload.rest_seconds = patch.rest
   const { error } = await supabase.from("sets").update(payload).eq("id", setId)
   if (error) throw error
 }
@@ -1035,11 +1084,14 @@ export async function addExerciseToWorkout(
     .select("id")
     .single()
   if (error) throw error
+  const lastByExercise = await fetchLastSessionSetsByExercise([exerciseId], workoutId)
+  const prefill = pickPrefillFor(1, lastByExercise.get(exerciseId))
   const { error: sErr } = await supabase.from("sets").insert({
     workout_exercise_id: we.id,
     set_number: 1,
-    weight_kg: 0,
-    reps: 0,
+    weight_kg: prefill.weight,
+    reps: prefill.reps,
+    rest_seconds: prefill.rest,
     done: false,
   })
   if (sErr) throw sErr
@@ -1073,10 +1125,18 @@ export async function createExercise(
       muscle: draft.muscle,
       equipment: draft.equipment,
     })
-    .select("id, name, muscle, equipment")
+    .select("id, name, muscle, equipment, user_id")
     .single()
   if (error) throw error
   return rowToExercise(data)
+}
+
+export async function deleteExercise(exerciseId: string) {
+  const { error } = await supabase
+    .from("exercises")
+    .delete()
+    .eq("id", exerciseId)
+  if (error) throw error
 }
 
 // ---------------------------------------------------------------------
@@ -1118,32 +1178,22 @@ export async function createRoutine(userId: string, draft: RoutineDraft) {
 }
 
 export async function updateRoutine(routineId: string, draft: RoutineDraft) {
-  const { error: rErr } = await supabase
-    .from("routines")
-    .update({
-      name: draft.name,
-      description: draft.description ?? null,
-      schedule: draft.schedule ?? null,
-      color: draft.color,
-    })
-    .eq("id", routineId)
-  if (rErr) throw rErr
-  const { error: delErr } = await supabase
-    .from("routine_exercises")
-    .delete()
-    .eq("routine_id", routineId)
-  if (delErr) throw delErr
-  if (draft.exercises.length > 0) {
-    const rows = draft.exercises.map((re, i) => ({
-      routine_id: routineId,
+  // Single-transaction RPC: updates routine row + replaces routine_exercises
+  // atomically, so a mid-save failure can't wipe the exercise list.
+  const { error } = await supabase.rpc("update_routine_with_exercises", {
+    p_routine_id: routineId,
+    p_name: draft.name,
+    p_description: draft.description ?? null,
+    p_schedule: draft.schedule ?? null,
+    p_color: draft.color,
+    p_exercises: draft.exercises.map((re, i) => ({
       exercise_id: re.exerciseId,
       position: i + 1,
       target_sets: re.sets,
       target_reps: re.targetReps,
-    }))
-    const { error: insErr } = await supabase.from("routine_exercises").insert(rows)
-    if (insErr) throw insErr
-  }
+    })),
+  })
+  if (error) throw error
 }
 
 export async function deleteRoutine(routineId: string) {
@@ -1163,6 +1213,73 @@ export async function updateProfile(
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq("id", userId)
   if (error) throw error
+}
+
+// ---------------------------------------------------------------------
+// last-session lookup (prefill new sets with last session's values)
+// ---------------------------------------------------------------------
+type LastSessionSet = {
+  set_number: number
+  weight_kg: number
+  reps: number
+  rest_seconds: number | null
+}
+
+async function fetchLastSessionSetsByExercise(
+  exerciseIds: string[],
+  excludeWorkoutId: string | null,
+): Promise<Map<string, LastSessionSet[]>> {
+  if (exerciseIds.length === 0) return new Map()
+  const { data, error } = await supabase
+    .from("workout_exercises")
+    .select(`
+      id, exercise_id,
+      workouts!inner ( id, started_at, ended_at ),
+      sets ( set_number, weight_kg, reps, rest_seconds, done )
+    `)
+    .in("exercise_id", exerciseIds)
+    .not("workouts.ended_at", "is", null)
+  if (error) throw error
+
+  const newest = new Map<string, { startedAt: string; sets: LastSessionSet[] }>()
+  for (const we of (data ?? []) as any[]) {
+    if (excludeWorkoutId && we.workouts?.id === excludeWorkoutId) continue
+    const startedAt = we.workouts?.started_at as string | undefined
+    if (!startedAt) continue
+    const doneSets: LastSessionSet[] = (we.sets ?? [])
+      .filter((s: any) => s.done)
+      .map((s: any) => ({
+        set_number: s.set_number,
+        weight_kg: Number(s.weight_kg),
+        reps: s.reps,
+        rest_seconds: s.rest_seconds ?? null,
+      }))
+    if (doneSets.length === 0) continue
+    const cur = newest.get(we.exercise_id)
+    if (!cur || startedAt > cur.startedAt) {
+      newest.set(we.exercise_id, { startedAt, sets: doneSets })
+    }
+  }
+  const out = new Map<string, LastSessionSet[]>()
+  for (const [exerciseId, v] of newest) {
+    out.set(
+      exerciseId,
+      v.sets.sort((a, b) => a.set_number - b.set_number),
+    )
+  }
+  return out
+}
+
+function pickPrefillFor(
+  setNumber: number,
+  lastSets: LastSessionSet[] | undefined,
+): { weight: number; reps: number; rest: number | null } {
+  if (!lastSets || lastSets.length === 0) {
+    return { weight: 0, reps: 0, rest: null }
+  }
+  const exact = lastSets.find((s) => s.set_number === setNumber)
+  const match = exact ?? lastSets[lastSets.length - 1]
+  return { weight: match.weight_kg, reps: match.reps, rest: match.rest_seconds }
 }
 
 // ---------------------------------------------------------------------

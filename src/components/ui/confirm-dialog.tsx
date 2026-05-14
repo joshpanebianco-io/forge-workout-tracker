@@ -14,6 +14,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   tone = "destructive",
   busy = false,
+  error,
   onConfirm,
 }: {
   open: boolean
@@ -24,6 +25,7 @@ export function ConfirmDialog({
   cancelLabel?: string
   tone?: ConfirmTone
   busy?: boolean
+  error?: string | null
   onConfirm: () => void | Promise<void>
 }) {
   React.useEffect(() => {
@@ -59,6 +61,11 @@ export function ConfirmDialog({
           <h2 className="text-base font-semibold tracking-tight">{title}</h2>
           {description && (
             <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+          )}
+          {error && (
+            <p className="w-full rounded-lg bg-destructive/10 px-3 py-2 text-left text-xs text-destructive">
+              {error}
+            </p>
           )}
         </div>
         <div className="grid grid-cols-2 gap-2 px-5 pb-5">

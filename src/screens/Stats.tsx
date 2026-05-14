@@ -154,7 +154,7 @@ function OverviewTab({
             />
             <DeltaTile
               icon={<Trophy className="h-3.5 w-3.5" />}
-              label="PRs"
+              label="PR's"
               value={`${stats.thisWeek.prCount}`}
               delta={stats.thisWeek.prCount - stats.lastWeek.prCount}
             />
@@ -181,7 +181,7 @@ function OverviewTab({
             />
             <SummaryTile
               icon={<Trophy className="h-3.5 w-3.5" />}
-              label="PRs"
+              label="PR's"
               value={`${data.summary.prCount}`}
               sub={`${(data.summary.prCount / weeksInPeriod * 4.33).toFixed(1)} / mo avg`}
             />
@@ -203,38 +203,29 @@ function OverviewTab({
         </Card>
       ) : (
         <>
-          {/* Muscle breakdown with 10-20 reference range */}
+          {/* Muscle breakdown */}
           {data.muscleAvg.length > 0 && (
             <Card className="p-4">
-              <div className="mb-3 flex items-end justify-between">
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Sets per muscle
-                  </p>
-                  <p className="mt-1 text-base font-bold">
-                    {data.muscleAvg.length} {data.muscleAvg.length === 1 ? "group" : "groups"}
-                    <span className="ml-1 text-xs font-normal text-muted-foreground">
-                      · {PERIOD_PHRASE[period]}
-                    </span>
-                  </p>
-                </div>
-                <p className="text-right text-[10px] text-muted-foreground">
-                  10–20 / week target
+              <div className="mb-3">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Sets per muscle
+                </p>
+                <p className="mt-1 text-base font-bold">
+                  {data.muscleAvg.length} {data.muscleAvg.length === 1 ? "group" : "groups"}
+                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+                    · {PERIOD_PHRASE[period]}
+                  </span>
                 </p>
               </div>
               <div className="flex flex-col gap-3">
                 {data.muscleAvg.map((r) => {
-                  const inRange = r.avgSetsPerWeek >= 10 && r.avgSetsPerWeek <= 20
                   const pct = Math.min(100, (r.avgSetsPerWeek / 25) * 100)
                   return (
                     <div key={r.muscle}>
                       <div className="mb-1 flex items-center justify-between text-xs">
                         <span className="font-semibold">{r.muscle}</span>
                         <span className="num text-muted-foreground">
-                          <span className={cn(
-                            "font-semibold",
-                            inRange ? "text-emerald-600" : "text-foreground"
-                          )}>
+                          <span className="font-semibold text-foreground">
                             {isWeek ? r.totalSets : r.avgSetsPerWeek.toFixed(1)}
                           </span>
                           {" "}sets{isWeek ? "" : "/wk"}
@@ -244,10 +235,6 @@ function OverviewTab({
                         </span>
                       </div>
                       <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
-                        <div
-                          className="absolute inset-y-0 bg-emerald-500/15"
-                          style={{ left: `${(10 / 25) * 100}%`, width: `${((20 - 10) / 25) * 100}%` }}
-                        />
                         <div
                           className={`relative h-full rounded-full bg-gradient-to-r ${MUSCLE_COLORS[r.muscle] ?? "from-blue-400 to-indigo-500"}`}
                           style={{ width: `${Math.max(4, pct)}%` }}
@@ -316,7 +303,7 @@ function ProgressTab({
 }: { trained: TrainedExercise[]; chart: ChartTheme }) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = React.useState(false)
-  const [metric, setMetric] = React.useState<ProgressMetric>("est1rm")
+  const [metric, setMetric] = React.useState<ProgressMetric>("topweight")
 
   React.useEffect(() => {
     if (selectedId) return
@@ -389,11 +376,11 @@ function ProgressTab({
 
       {/* Metric toggle */}
       <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-secondary/60 p-1 ring-inset-border">
-        <MetricChip active={metric === "est1rm"} onClick={() => setMetric("est1rm")}>
-          Est. 1RM
-        </MetricChip>
         <MetricChip active={metric === "topweight"} onClick={() => setMetric("topweight")}>
           Top set
+        </MetricChip>
+        <MetricChip active={metric === "est1rm"} onClick={() => setMetric("est1rm")}>
+          Est. 1RM
         </MetricChip>
       </div>
 

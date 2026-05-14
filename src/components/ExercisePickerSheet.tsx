@@ -1,10 +1,11 @@
 import * as React from "react"
-import { Search, Check, Plus, ArrowLeft, Loader2 } from "lucide-react"
+import { Search, Check, Plus, ArrowLeft, Loader2, Trash2 } from "lucide-react"
 import { Sheet } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import type { Exercise, MuscleGroup } from "@/lib/types"
-import { useExercises, createExercise } from "@/lib/api"
+import { useExercises, createExercise, deleteExercise } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 
@@ -35,6 +36,9 @@ export function ExercisePickerSheet({
   const [newEquipment, setNewEquipment] = React.useState<Exercise["equipment"]>("Barbell")
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = React.useState<Exercise | null>(null)
+  const [deleting, setDeleting] = React.useState(false)
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!open) {
@@ -86,6 +90,29 @@ export function ExercisePickerSheet({
     setError(null)
   }
 
+  const doDelete = async () => {
+    if (!confirmDelete) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteExercise(confirmDelete.id)
+      setConfirmDelete(null)
+      setSelected((prev) => {
+        const next = new Set(prev)
+        next.delete(confirmDelete.id)
+        return next
+      })
+      refetch()
+    } catch (e: any) {
+      const msg = e?.code === "23503" || /foreign key|violates/i.test(e?.message ?? "")
+        ? "Can't delete — this exercise is used in a logged workout or routine."
+        : (e?.message ?? "Failed to delete")
+      setDeleteError(msg)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const saveNew = async () => {
     if (!user) return
     if (!newName.trim()) { setError("Name required"); return }
@@ -132,7 +159,7 @@ export function ExercisePickerSheet({
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="Cable Lateral Raise"
+              placeholder="Name this exercise"
             />
           </div>
           <div>
@@ -208,23 +235,34 @@ export function ExercisePickerSheet({
               {filtered.map((e) => {
                 const isOn = selected.has(e.id)
                 return (
-                  <button
+                  <div
                     key={e.id}
-                    onClick={() => toggle(e.id)}
                     className={cn(
-                      "flex items-center gap-3 rounded-xl bg-card p-3 text-left ring-inset-border transition-colors hover:bg-secondary/40",
+                      "flex items-center gap-2 rounded-xl bg-card p-3 ring-inset-border transition-colors hover:bg-secondary/40",
                       multi && isOn && "bg-primary/10 ring-2 ring-primary/40"
                     )}
                   >
-                    <div className="tint-blue flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
-                      <span className="text-[10px] font-bold uppercase">{e.muscle.slice(0, 3)}</span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{e.name}</p>
-                      <p className="text-xs text-muted-foreground">{e.muscle} · {e.equipment}</p>
-                    </div>
-                    {multi && isOn && <Check className="h-4 w-4 text-primary" />}
-                  </button>
+                    <button
+                      onClick={() => toggle(e.id)}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    >
+                      <div className="tint-blue flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+                        <span className="text-[10px] font-bold uppercase">{e.muscle.slice(0, 3)}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">{e.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">{e.muscle} · {e.equipment}</p>
+                      </div>
+                      {multi && isOn && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                    </button>
+                    <button
+                      onClick={() => { setDeleteError(null); setConfirmDelete(e) }}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`Delete ${e.name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 )
               })}
             </div>
@@ -246,6 +284,17 @@ export function ExercisePickerSheet({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        onOpenChange={(o) => { if (!o) { setConfirmDelete(null); setDeleteError(null) } }}
+        title={confirmDelete ? `Delete "${confirmDelete.name}"?` : "Delete exercise?"}
+        description="This removes the exercise from your library. You can only delete exercises that aren't used in any logged workout or routine."
+        confirmLabel="Delete"
+        busy={deleting}
+        error={deleteError}
+        onConfirm={doDelete}
+      />
     </Sheet>
   )
 }

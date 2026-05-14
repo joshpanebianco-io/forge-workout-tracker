@@ -12,6 +12,15 @@ import { ExercisePickerSheet } from "@/components/ExercisePickerSheet"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import type { Routine } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import {
+  DndContext, PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors,
+  closestCenter, type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 
 const COLORS = [
   { id: "from-blue-500 to-indigo-500", swatch: "from-blue-500 to-indigo-500" },
@@ -44,6 +53,7 @@ export function RoutineSheet({
   const [deleting, setDeleting] = React.useState(false)
   const [confirmDelete, setConfirmDelete] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!open) return
@@ -64,6 +74,23 @@ export function RoutineSheet({
   }, [open, routine])
 
   const lookup = (id: string) => exercises.find((e) => e.id === id)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    setItems((arr) => {
+      const oldIndex = arr.findIndex((i) => i.exerciseId === active.id)
+      const newIndex = arr.findIndex((i) => i.exerciseId === over.id)
+      if (oldIndex === -1 || newIndex === -1) return arr
+      return arrayMove(arr, oldIndex, newIndex)
+    })
+  }
 
   const save = async () => {
     if (!user) return
@@ -92,13 +119,14 @@ export function RoutineSheet({
   const doDelete = async () => {
     if (!routine) return
     setDeleting(true)
+    setDeleteError(null)
     try {
       await deleteRoutine(routine.id)
       setConfirmDelete(false)
       onSaved()
       onOpenChange(false)
     } catch (e: any) {
-      setError(e?.message ?? "Failed to delete")
+      setDeleteError(e?.message ?? "Failed to delete")
     } finally {
       setDeleting(false)
     }
@@ -110,19 +138,19 @@ export function RoutineSheet({
         <div className="flex flex-col gap-4">
           <div>
             <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Push Day" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name this routine" />
           </div>
           <div>
             <Label>Description</Label>
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Chest, shoulders, triceps"
+              placeholder="Optional description"
             />
           </div>
           <div>
             <Label>Schedule</Label>
-            <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="Mon · Thu" />
+            <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="Optional schedule" />
           </div>
           <div>
             <Label>Color</Label>
@@ -153,41 +181,38 @@ export function RoutineSheet({
                 No exercises yet. Tap "Add" to pick from your library.
               </Card>
             ) : (
-              <div className="flex flex-col gap-1.5">
-                {items.map((it, idx) => {
-                  const ex = lookup(it.exerciseId)
-                  return (
-                    <Card key={it.exerciseId + idx} className="flex items-center gap-2 p-3">
-                      <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{ex?.name ?? "Unknown"}</p>
-                        <p className="text-xs text-muted-foreground">{ex?.muscle ?? ""}</p>
-                      </div>
-                      <NumberCell
-                        label="sets"
-                        value={it.sets}
-                        onChange={(v) =>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={items.map((it) => it.exerciseId)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="flex flex-col gap-1.5">
+                    {items.map((it, idx) => (
+                      <SortableExerciseRow
+                        key={it.exerciseId}
+                        id={it.exerciseId}
+                        name={lookup(it.exerciseId)?.name ?? "Unknown"}
+                        muscle={lookup(it.exerciseId)?.muscle ?? ""}
+                        sets={it.sets}
+                        targetReps={it.targetReps}
+                        onSetsChange={(v) =>
                           setItems((arr) => arr.map((r, i) => i === idx ? { ...r, sets: Math.max(1, v) } : r))
                         }
-                      />
-                      <input
-                        value={it.targetReps}
-                        onChange={(e) =>
-                          setItems((arr) => arr.map((r, i) => i === idx ? { ...r, targetReps: e.target.value } : r))
+                        onRepsChange={(v) =>
+                          setItems((arr) => arr.map((r, i) => i === idx ? { ...r, targetReps: v } : r))
                         }
-                        placeholder="8-10"
-                        className="num h-9 w-16 rounded-lg bg-secondary/60 px-2 text-center text-sm font-semibold ring-inset-border focus:outline-none focus:ring-2 focus:ring-ring"
+                        onRemove={() =>
+                          setItems((arr) => arr.filter((_, i) => i !== idx))
+                        }
                       />
-                      <button
-                        onClick={() => setItems((arr) => arr.filter((_, i) => i !== idx))}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </Card>
-                  )
-                })}
-              </div>
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             )}
           </div>
 
@@ -223,11 +248,12 @@ export function RoutineSheet({
 
       <ConfirmDialog
         open={confirmDelete}
-        onOpenChange={setConfirmDelete}
+        onOpenChange={(o) => { setConfirmDelete(o); if (!o) setDeleteError(null) }}
         title="Delete this routine?"
-        description="This routine and its exercises will be removed. This can't be undone."
+        description="This routine and its exercises will be removed. Past workouts logged from it are kept. This can't be undone."
         confirmLabel="Delete"
         busy={deleting}
+        error={deleteError}
         onConfirm={doDelete}
       />
     </>
@@ -256,5 +282,66 @@ function NumberCell({
       />
       <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
     </div>
+  )
+}
+
+function SortableExerciseRow({
+  id, name, muscle, sets, targetReps, onSetsChange, onRepsChange, onRemove,
+}: {
+  id: string
+  name: string
+  muscle: string
+  sets: number
+  targetReps: string
+  onSetsChange: (v: number) => void
+  onRepsChange: (v: string) => void
+  onRemove: () => void
+}) {
+  const {
+    attributes, listeners, setNodeRef, transform, transition, isDragging,
+  } = useSortable({ id })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+  }
+
+  return (
+    <Card
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "flex items-center gap-2 p-3 touch-none",
+        isDragging && "opacity-70 shadow-card"
+      )}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="flex h-8 w-6 shrink-0 cursor-grab items-center justify-center text-muted-foreground hover:text-foreground active:cursor-grabbing"
+        aria-label="Drag to reorder"
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold">{name}</p>
+        <p className="text-xs text-muted-foreground">{muscle}</p>
+      </div>
+      <NumberCell label="sets" value={sets} onChange={onSetsChange} />
+      <input
+        value={targetReps}
+        onChange={(e) => onRepsChange(e.target.value)}
+        placeholder="reps"
+        className="num h-9 w-16 rounded-lg bg-secondary/60 px-2 text-center text-sm font-semibold ring-inset-border placeholder:font-normal placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-ring"
+      />
+      <button
+        onClick={onRemove}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </Card>
   )
 }
