@@ -10,7 +10,7 @@ import {
 } from "@/lib/api"
 import { ExercisePickerSheet } from "@/components/ExercisePickerSheet"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import type { Routine } from "@/lib/types"
+import type { Exercise, Routine } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import {
   DndContext, PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors,
@@ -48,6 +48,9 @@ export function RoutineSheet({
   const [schedule, setSchedule] = React.useState("")
   const [color, setColor] = React.useState(COLORS[0].id)
   const [items, setItems] = React.useState<RoutineDraft["exercises"]>([])
+  // Newly-picked exercises that may not yet be in the refetched `exercises`
+  // list — used as a fallback for lookup so display never flashes "Unknown".
+  const [pickCache, setPickCache] = React.useState<Map<string, Exercise>>(new Map())
   const [pickerOpen, setPickerOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
@@ -73,7 +76,8 @@ export function RoutineSheet({
     setError(null)
   }, [open, routine])
 
-  const lookup = (id: string) => exercises.find((e) => e.id === id)
+  const lookup = (id: string) =>
+    exercises.find((e) => e.id === id) ?? pickCache.get(id)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -248,6 +252,11 @@ export function RoutineSheet({
             ...arr,
             ...picked.map((p) => ({ exerciseId: p.id, sets: 3, targetReps: "8-10" })),
           ])
+          setPickCache((prev) => {
+            const next = new Map(prev)
+            for (const p of picked) next.set(p.id, p)
+            return next
+          })
           refetchExercises()
         }}
       />
