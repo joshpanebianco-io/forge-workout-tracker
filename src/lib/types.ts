@@ -7,6 +7,7 @@ export type Exercise = {
   name: string
   muscle: MuscleGroup
   equipment: "Barbell" | "Dumbbell" | "Machine" | "Cable" | "Bodyweight" | "Kettlebell"
+  userId?: string | null
 }
 
 export type SetEntry = {
@@ -14,6 +15,7 @@ export type SetEntry = {
   weight: number
   reps: number
   rpe?: number
+  rest?: number
   done: boolean
   isPR?: boolean
 }
