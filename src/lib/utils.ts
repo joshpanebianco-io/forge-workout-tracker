@@ -81,6 +81,27 @@ export function startOfMonth(d: Date) {
   return date
 }
 
+export function startOfDay(d: Date) {
+  const date = new Date(d)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+// Local-timezone YYYY-MM-DD. Use as a Map/Set key when bucketing by day.
+// Avoids `.toISOString().slice(0,10)`, which silently shifts to the UTC day.
+export function localDayKey(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+export function localMonthKey(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  return `${y}-${m}`
+}
+
 export function addMonths(d: Date, n: number) {
   const date = new Date(d)
   date.setMonth(date.getMonth() + n)

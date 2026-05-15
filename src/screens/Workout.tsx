@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   Check, Plus, Timer, Trophy, Flame, X, ChevronDown, ChevronUp, Loader2, MoreVertical, Trash2,
+  Pencil,
 } from "lucide-react"
 import { ScreenHeader } from "@/components/ScreenHeader"
 import { Card } from "@/components/ui/card"
@@ -14,6 +15,7 @@ import {
 import { useAuth } from "@/lib/auth"
 import { ExercisePickerSheet } from "@/components/ExercisePickerSheet"
 import { SetEditorSheet } from "@/components/SetEditorSheet"
+import { WorkoutTitleEditSheet } from "@/components/WorkoutTitleEditSheet"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import type { ExerciseLog, SetEntry, Workout as WorkoutType } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -127,6 +129,7 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
   const [confirmRemoveEx, setConfirmRemoveEx] = React.useState<string | null>(null)
   const [removingEx, setRemovingEx] = React.useState(false)
   const [removeExError, setRemoveExError] = React.useState<string | null>(null)
+  const [renameOpen, setRenameOpen] = React.useState(false)
 
   const session = useWorkoutSession()
   const now = useTick(1000)
@@ -262,6 +265,12 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
             <MoreVertical className="h-4 w-4" />
             {showFinishMenu && (
               <div className="absolute right-0 top-12 z-20 w-44 rounded-xl bg-card p-1 text-left text-sm shadow-card ring-inset-border">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setRenameOpen(true); setShowFinishMenu(false) }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 hover:bg-secondary/60"
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Rename
+                </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDiscard(); setShowFinishMenu(false) }}
                   className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-destructive hover:bg-destructive/10"
@@ -438,6 +447,14 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
         busy={removingEx}
         error={removeExError}
         onConfirm={doRemoveExercise}
+      />
+
+      <WorkoutTitleEditSheet
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        workoutId={workout.id}
+        currentTitle={workout.title}
+        onSaved={onChange}
       />
     </div>
   )

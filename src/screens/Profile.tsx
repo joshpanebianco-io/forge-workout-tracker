@@ -71,7 +71,7 @@ export function Profile() {
             <div className="mt-4 grid grid-cols-3 divide-x divide-border rounded-xl bg-secondary/60 py-3">
               <Mini label="Workouts" value={`${stats.totalWorkouts}`} />
               <Mini label="Streak" value={`${stats.streak}w`} />
-              <Mini label="PR's" value={`${prs.length}`} />
+              <Mini label={<span className="normal-case">PRs</span>} value={`${prs.length}`} />
             </div>
           </div>
         </Card>
@@ -165,7 +165,7 @@ export function Profile() {
   )
 }
 
-function Mini({ label, value }: { label: string; value: string }) {
+function Mini({ label, value }: { label: React.ReactNode; value: string }) {
   return (
     <div className="flex flex-col items-center">
       <p className="num text-base font-bold">{value}</p>

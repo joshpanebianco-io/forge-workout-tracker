@@ -112,6 +112,16 @@
   .phone-scroll { -ms-overflow-style: none; scrollbar-width: none; }
 }
 
+.recharts-wrapper :focus,
+.recharts-wrapper :focus-visible,
+.recharts-surface :focus,
+.recharts-surface :focus-visible,
+.recharts-sector,
+.recharts-sector:focus,
+.recharts-sector:focus-visible {
+  outline: none !important;
+}
+
 @layer utilities {
   .glass {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.96) 100%);
