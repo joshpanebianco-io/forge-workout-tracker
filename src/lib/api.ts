@@ -7,16 +7,54 @@ import type {
 
 type EquipmentDB = Exercise["equipment"]
 
-function rowToExercise(r: {
-  id: string; name: string; muscle: string; equipment: string; user_id?: string | null
-}): Exercise {
+function rowToExercise(
+  r: { id: string; name: string; muscle: string; equipment: string; user_id?: string | null },
+  overrides?: Map<string, string>,
+): Exercise {
   return {
     id: r.id,
-    name: r.name,
+    name: overrides?.get(r.id) ?? r.name,
     muscle: r.muscle as MuscleGroup,
     equipment: r.equipment as EquipmentDB,
     userId: r.user_id ?? null,
   }
+}
+
+// ---------------------------------------------------------------------
+// per-user exercise name overrides
+// ---------------------------------------------------------------------
+let overridesCache: { userId: string; map: Map<string, string> } | null = null
+const overrideListeners = new Set<() => void>()
+let overrideEpoch = 0
+
+function invalidateOverrides() {
+  overridesCache = null
+  overrideEpoch++
+  overrideListeners.forEach((cb) => cb())
+}
+
+async function getOverridesMap(userId: string): Promise<Map<string, string>> {
+  if (overridesCache?.userId === userId) return overridesCache.map
+  const { data, error } = await supabase
+    .from("exercise_overrides")
+    .select("exercise_id, name")
+    .eq("user_id", userId)
+  if (error) throw error
+  const map = new Map<string, string>(
+    (data ?? []).map((r: any) => [r.exercise_id as string, r.name as string]),
+  )
+  overridesCache = { userId, map }
+  return map
+}
+
+function useOverrideEpoch() {
+  const [, set] = React.useState(overrideEpoch)
+  React.useEffect(() => {
+    const cb = () => set(overrideEpoch)
+    overrideListeners.add(cb)
+    return () => { overrideListeners.delete(cb) }
+  }, [])
+  return overrideEpoch
 }
 
 // ---------------------------------------------------------------------
@@ -52,14 +90,20 @@ function useAsync<T>(
 // ---------------------------------------------------------------------
 export function useExercises() {
   const { user } = useAuth()
+  const epoch = useOverrideEpoch()
   return useAsync<Exercise[]>(async () => {
-    const { data, error } = await supabase
-      .from("exercises")
-      .select("id, name, muscle, equipment, user_id")
-      .order("name")
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from("exercises")
+        .select("id, name, muscle, equipment, user_id")
+        .order("name"),
+      user ? getOverridesMap(user.id) : Promise.resolve(new Map<string, string>()),
+    ])
     if (error) throw error
-    return (data ?? []).map(rowToExercise)
-  }, [user?.id], [])
+    return (data ?? [])
+      .map((r) => rowToExercise(r, overrides))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [user?.id, epoch], [])
 }
 
 // ---------------------------------------------------------------------
@@ -106,13 +150,13 @@ const WORKOUT_SELECT = `
   )
 `
 
-function rowToWorkout(w: any): Workout {
+function rowToWorkout(w: any, overrides?: Map<string, string>): Workout {
   const exercises: ExerciseLog[] = (w.workout_exercises ?? [])
     .sort((a: any, b: any) => a.position - b.position)
     .map((we: any) => ({
       id: we.id,
       notes: we.notes ?? undefined,
-      exercise: rowToExercise(we.exercises),
+      exercise: rowToExercise(we.exercises, overrides),
       sets: (we.sets ?? [])
         .sort((a: any, b: any) => a.set_number - b.set_number)
         .map(
@@ -139,33 +183,41 @@ function rowToWorkout(w: any): Workout {
 
 export function useRecentWorkouts(limit = 20) {
   const { user } = useAuth()
+  const epoch = useOverrideEpoch()
   return useAsync<Workout[]>(async () => {
     if (!user) return []
-    const { data, error } = await supabase
-      .from("workouts")
-      .select(WORKOUT_SELECT)
-      .order("started_at", { ascending: false })
-      .limit(limit)
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from("workouts")
+        .select(WORKOUT_SELECT)
+        .order("started_at", { ascending: false })
+        .limit(limit),
+      getOverridesMap(user.id),
+    ])
     if (error) throw error
-    return (data ?? []).map(rowToWorkout)
-  }, [user?.id, limit], [])
+    return (data ?? []).map((w) => rowToWorkout(w, overrides))
+  }, [user?.id, limit, epoch], [])
 }
 
 export function useWeeklyWorkouts(weekStart: Date) {
   const { user } = useAuth()
   const startIso = weekStart.toISOString()
   const endIso = new Date(weekStart.getTime() + 7 * 86_400_000).toISOString()
+  const epoch = useOverrideEpoch()
   return useAsync<Workout[]>(async () => {
     if (!user) return []
-    const { data, error } = await supabase
-      .from("workouts")
-      .select(WORKOUT_SELECT)
-      .gte("started_at", startIso)
-      .lt("started_at", endIso)
-      .order("started_at", { ascending: false })
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from("workouts")
+        .select(WORKOUT_SELECT)
+        .gte("started_at", startIso)
+        .lt("started_at", endIso)
+        .order("started_at", { ascending: false }),
+      getOverridesMap(user.id),
+    ])
     if (error) throw error
-    return (data ?? []).map(rowToWorkout)
-  }, [user?.id, startIso, endIso], [])
+    return (data ?? []).map((w) => rowToWorkout(w, overrides))
+  }, [user?.id, startIso, endIso, epoch], [])
 }
 
 export function useMonthWorkoutDates(monthStart: Date) {
@@ -189,18 +241,22 @@ export function useMonthWorkoutDates(monthStart: Date) {
 
 export function useActiveWorkout() {
   const { user } = useAuth()
+  const epoch = useOverrideEpoch()
   return useAsync<Workout | null>(async () => {
     if (!user) return null
-    const { data, error } = await supabase
-      .from("workouts")
-      .select(WORKOUT_SELECT)
-      .is("ended_at", null)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from("workouts")
+        .select(WORKOUT_SELECT)
+        .is("ended_at", null)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      getOverridesMap(user.id),
+    ])
     if (error) throw error
-    return data ? rowToWorkout(data) : null
-  }, [user?.id], null)
+    return data ? rowToWorkout(data, overrides) : null
+  }, [user?.id, epoch], null)
 }
 
 // ---------------------------------------------------------------------
@@ -208,22 +264,26 @@ export function useActiveWorkout() {
 // ---------------------------------------------------------------------
 export function usePersonalRecords() {
   const { user } = useAuth()
+  const epoch = useOverrideEpoch()
   return useAsync<PR[]>(async () => {
     if (!user) return []
-    const { data, error } = await supabase
-      .from("personal_records")
-      .select("exercise_id, weight_kg, reps, estimated_1rm, achieved_at, exercises(name)")
-      .order("achieved_at", { ascending: false })
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from("personal_records")
+        .select("exercise_id, weight_kg, reps, estimated_1rm, achieved_at, exercises(name)")
+        .order("achieved_at", { ascending: false }),
+      getOverridesMap(user.id),
+    ])
     if (error) throw error
     return (data ?? []).map((r: any) => ({
       exerciseId: r.exercise_id,
-      exerciseName: r.exercises?.name ?? "",
+      exerciseName: overrides.get(r.exercise_id) ?? r.exercises?.name ?? "",
       weight: Number(r.weight_kg),
       reps: r.reps,
       date: r.achieved_at,
       estimated1RM: Math.round(Number(r.estimated_1rm)),
     }))
-  }, [user?.id], [])
+  }, [user?.id, epoch], [])
 }
 
 // ---------------------------------------------------------------------
@@ -461,18 +521,22 @@ export type TrainedExercise = {
 
 export function useTrainedExercises() {
   const { user } = useAuth()
+  const epoch = useOverrideEpoch()
   return useAsync<TrainedExercise[]>(async () => {
     if (!user) return []
-    const { data, error } = await supabase
-      .from("workout_exercises")
-      .select(`
-        exercise_id,
-        workout_id,
-        exercises ( id, name, muscle ),
-        workouts!inner ( started_at, ended_at ),
-        sets ( done )
-      `)
-      .not("workouts.ended_at", "is", null)
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from("workout_exercises")
+        .select(`
+          exercise_id,
+          workout_id,
+          exercises ( id, name, muscle ),
+          workouts!inner ( started_at, ended_at ),
+          sets ( done )
+        `)
+        .not("workouts.ended_at", "is", null),
+      getOverridesMap(user.id),
+    ])
     if (error) throw error
 
     const grouped = new Map<string, {
@@ -488,7 +552,7 @@ export function useTrainedExercises() {
       const ex = we.exercises
       if (!ex) continue
       const cur = grouped.get(ex.id) ?? {
-        name: ex.name,
+        name: overrides.get(ex.id) ?? ex.name,
         muscle: ex.muscle as MuscleGroup,
         workoutIds: new Set<string>(),
         lastTrained: "",
@@ -508,13 +572,14 @@ export function useTrainedExercises() {
         lastTrained: v.lastTrained,
       }))
       .sort((a, b) => (b.lastTrained > a.lastTrained ? 1 : -1))
-  }, [user?.id], [])
+  }, [user?.id, epoch], [])
 }
 
 // ---------------------------------------------------------------------
 // per-exercise progression (one row per session)
 // ---------------------------------------------------------------------
 export type ProgressPoint = {
+  workoutId: string
   date: string
   topWeight: number
   topReps: number
@@ -550,7 +615,8 @@ export function useExerciseProgress(exerciseId: string | null) {
     const points: ProgressPoint[] = []
     for (const we of (data ?? []) as any[]) {
       const startedAt = we.workouts?.started_at as string | undefined
-      if (!startedAt) continue
+      const workoutId = we.workouts?.id as string | undefined
+      if (!startedAt || !workoutId) continue
       let topWeight = 0
       let topReps = 0
       let topEst = 0
@@ -572,6 +638,7 @@ export function useExerciseProgress(exerciseId: string | null) {
       }
       if (totalSets === 0) continue
       points.push({
+        workoutId,
         date: startedAt,
         topWeight,
         topReps,
@@ -952,7 +1019,7 @@ export async function finishWorkout(workoutId: string, durationMin: number) {
 export async function startEmptyWorkout(userId: string, title = "Quick session") {
   const { data, error } = await supabase
     .from("workouts")
-    .insert({ user_id: userId, title })
+    .insert({ user_id: userId, title, started_at: new Date().toISOString() })
     .select("id")
     .single()
   if (error) {
@@ -983,7 +1050,12 @@ export async function startWorkoutFromRoutine(routineId: string, userId: string)
 
   const { data: workout, error: wErr } = await supabase
     .from("workouts")
-    .insert({ user_id: userId, routine_id: routineId, title: routine.name })
+    .insert({
+      user_id: userId,
+      routine_id: routineId,
+      title: routine.name,
+      started_at: new Date().toISOString(),
+    })
     .select("id")
     .single()
   if (wErr) {
@@ -1030,6 +1102,20 @@ export async function startWorkoutFromRoutine(routineId: string, userId: string)
 
 export async function signOut() {
   await supabase.auth.signOut()
+}
+
+export async function clearMyData(userId: string) {
+  // Order doesn't matter for correctness — each row is deleted by user_id and
+  // FK cascades clean up dependents (workout_exercises/sets, routine_exercises).
+  // Profile row is intentionally preserved.
+  const tables: Array<"workouts" | "routines" | "exercises" | "exercise_overrides"> = [
+    "workouts", "routines", "exercises", "exercise_overrides",
+  ]
+  for (const t of tables) {
+    const { error } = await supabase.from(t).delete().eq("user_id", userId)
+    if (error) throw error
+  }
+  invalidateOverrides()
 }
 
 // ---------------------------------------------------------------------
@@ -1139,6 +1225,35 @@ export async function deleteExercise(exerciseId: string) {
   if (error) throw error
 }
 
+export async function renameExercise(
+  exercise: { id: string; userId: string | null },
+  userId: string,
+  name: string,
+) {
+  const trimmed = name.trim()
+  if (exercise.userId === null) {
+    const { error } = await supabase
+      .from("exercise_overrides")
+      .upsert(
+        {
+          user_id: userId,
+          exercise_id: exercise.id,
+          name: trimmed,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,exercise_id" },
+      )
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from("exercises")
+      .update({ name: trimmed })
+      .eq("id", exercise.id)
+    if (error) throw error
+  }
+  invalidateOverrides()
+}
+
 // ---------------------------------------------------------------------
 // routine mutations
 // ---------------------------------------------------------------------
@@ -1214,8 +1329,10 @@ export async function updateProfile(
 ) {
   const { error } = await supabase
     .from("profiles")
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq("id", userId)
+    .upsert(
+      { id: userId, ...patch, updated_at: new Date().toISOString() },
+      { onConflict: "id" },
+    )
   if (error) throw error
 }
 
@@ -1291,14 +1408,18 @@ function pickPrefillFor(
 // ---------------------------------------------------------------------
 export function useWorkout(workoutId: string | null) {
   const { user } = useAuth()
+  const epoch = useOverrideEpoch()
   return useAsync<Workout | null>(async () => {
     if (!workoutId || !user) return null
-    const { data, error } = await supabase
-      .from("workouts")
-      .select(WORKOUT_SELECT)
-      .eq("id", workoutId)
-      .maybeSingle()
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from("workouts")
+        .select(WORKOUT_SELECT)
+        .eq("id", workoutId)
+        .maybeSingle(),
+      getOverridesMap(user.id),
+    ])
     if (error) throw error
-    return data ? rowToWorkout(data) : null
-  }, [user?.id, workoutId], null)
+    return data ? rowToWorkout(data, overrides) : null
+  }, [user?.id, workoutId, epoch], null)
 }

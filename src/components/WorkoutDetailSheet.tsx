@@ -1,18 +1,47 @@
-import { Clock, Dumbbell, Flame, Trophy } from "lucide-react"
+import * as React from "react"
+import { Clock, Dumbbell, Flame, Trophy, Trash2, Loader2 } from "lucide-react"
 import { Sheet } from "@/components/ui/sheet"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { useWorkout } from "@/lib/api"
-import { relativeDay } from "@/lib/utils"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { useWorkout, discardWorkout } from "@/lib/api"
+import { relativeDay, formatTime } from "@/lib/utils"
 
 export function WorkoutDetailSheet({
-  workoutId, onOpenChange,
+  workoutId, onOpenChange, onDeleted,
 }: {
   workoutId: string | null
   onOpenChange: (o: boolean) => void
+  onDeleted?: () => void
 }) {
   const { data: w, loading } = useWorkout(workoutId)
   const open = workoutId !== null
+  const [confirmOpen, setConfirmOpen] = React.useState(false)
+  const [deleting, setDeleting] = React.useState(false)
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    if (!open) {
+      setConfirmOpen(false)
+      setDeleteError(null)
+    }
+  }, [open])
+
+  const doDelete = async () => {
+    if (!w) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await discardWorkout(w.id)
+      setConfirmOpen(false)
+      onDeleted?.()
+      onOpenChange(false)
+    } catch (e: any) {
+      setDeleteError(e?.message ?? "Failed to delete")
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange} title={w?.title ?? "Workout"}>
@@ -23,7 +52,7 @@ export function WorkoutDetailSheet({
           <p className="text-xs text-muted-foreground">
             {relativeDay(w.date)} · {new Date(w.date).toLocaleDateString(undefined, {
               weekday: "short", day: "numeric", month: "short", year: "numeric",
-            })}
+            })} <span className="num">· {formatTime(w.date)}</span>
           </p>
           <div className="grid grid-cols-3 gap-2">
             <StatBox icon={<Clock className="h-3.5 w-3.5" />} label="Duration" value={`${w.durationMin}m`} />
@@ -80,8 +109,28 @@ export function WorkoutDetailSheet({
               )
             })}
           </div>
+
+          <button
+            onClick={() => { setDeleteError(null); setConfirmOpen(true) }}
+            disabled={deleting}
+            className="mt-3 inline-flex items-center justify-center gap-1.5 self-center px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+          >
+            {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+            Delete workout
+          </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={(o) => { if (!o) { setConfirmOpen(false); setDeleteError(null) } }}
+        title={w ? `Delete "${w.title}"?` : "Delete workout?"}
+        description="This permanently removes the workout, its exercises, and all logged sets. This can't be undone."
+        confirmLabel="Delete"
+        busy={deleting}
+        error={deleteError}
+        onConfirm={doDelete}
+      />
     </Sheet>
   )
 }

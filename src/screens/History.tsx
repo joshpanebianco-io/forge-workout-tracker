@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useWeeklyWorkouts, useStats, useHistoryStats } from "@/lib/api"
 import {
-  addDays, isSameDay, relativeDay, startOfWeek, formatWeekRange, weekLabel, cn,
+  addDays, isSameDay, relativeDay, startOfWeek, formatWeekRange, weekLabel, formatTime, cn,
 } from "@/lib/utils"
 import { WorkoutDetailSheet } from "@/components/WorkoutDetailSheet"
 import { DatePickerSheet } from "@/components/DatePickerSheet"
@@ -17,9 +17,9 @@ export function History() {
   const thisWeekStart = React.useMemo(() => startOfWeek(today), [today])
 
   const [weekStart, setWeekStart] = React.useState<Date>(thisWeekStart)
-  const { data: weekWorkouts, loading } = useWeeklyWorkouts(weekStart)
-  const { data: stats } = useStats()
-  const { data: history } = useHistoryStats()
+  const { data: weekWorkouts, loading, refetch: refetchWeek } = useWeeklyWorkouts(weekStart)
+  const { data: stats, refetch: refetchStats } = useStats()
+  const { data: history, refetch: refetchHistory } = useHistoryStats()
   const [openId, setOpenId] = React.useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = React.useState(false)
 
@@ -144,7 +144,7 @@ export function History() {
         <Card className="grid grid-cols-3 divide-x divide-border/60 p-0">
           <Mini big={`${summary.sessions}`} label="Sessions" />
           <Mini big={fmtHours(summary.minutes)} label="Time" />
-          <Mini big={`${summary.prCount}`} label="PRs" />
+          <Mini big={`${summary.prCount}`} label="PR's" />
         </Card>
       </div>
 
@@ -194,7 +194,9 @@ export function History() {
                         </Badge>
                       )}
                     </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{relativeDay(w.date)}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {relativeDay(w.date)} <span className="num">· {formatTime(w.date)}</span>
+                    </p>
 
                     <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
                       <span className="flex items-center gap-1">
@@ -220,7 +222,11 @@ export function History() {
         </div>
       )}
 
-      <WorkoutDetailSheet workoutId={openId} onOpenChange={(o) => !o && setOpenId(null)} />
+      <WorkoutDetailSheet
+        workoutId={openId}
+        onOpenChange={(o) => !o && setOpenId(null)}
+        onDeleted={() => { refetchWeek(); refetchStats(); refetchHistory() }}
+      />
 
       <DatePickerSheet
         open={pickerOpen}
