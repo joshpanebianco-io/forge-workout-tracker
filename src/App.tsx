@@ -12,7 +12,13 @@ import { useAuth } from "@/lib/auth"
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home")
+  const [statsInitTab, setStatsInitTab] = useState<string | null>(null)
   const { session, loading } = useAuth()
+
+  const navigate = (next: Tab, opts?: { statsTab?: string }) => {
+    setTab(next)
+    setStatsInitTab(next === "stats" ? (opts?.statsTab ?? null) : null)
+  }
 
   if (loading) {
     return (
@@ -25,11 +31,11 @@ export default function App() {
   if (!session) return <Login />
 
   return (
-    <AppShell active={tab} onChange={setTab}>
-      {tab === "home" && <Home onNavigate={setTab} />}
+    <AppShell active={tab} onChange={(t) => navigate(t)}>
+      {tab === "home" && <Home onNavigate={navigate} />}
       {tab === "workout" && <Workout />}
       {tab === "history" && <History />}
-      {tab === "stats" && <Stats />}
+      {tab === "stats" && <Stats key={statsInitTab ?? "_"} initialTab={statsInitTab ?? "overview"} />}
       {tab === "profile" && <Profile />}
     </AppShell>
   )

@@ -9,12 +9,17 @@ import { Avatar } from "@/components/ui/avatar"
 import {
   useStats, useProfile, useRoutines, useActiveWorkout, usePersonalRecords,
 } from "@/lib/api"
+import { fmtMinutes } from "@/lib/utils"
 import { RoutineSheet } from "@/components/RoutineSheet"
 import { RoutineListSheet } from "@/components/RoutineListSheet"
 import type { Tab } from "@/components/BottomNav"
 import type { Routine } from "@/lib/types"
 
-export function Home({ onNavigate }: { onNavigate: (t: Tab) => void }) {
+export function Home({
+  onNavigate,
+}: {
+  onNavigate: (t: Tab, opts?: { statsTab?: string }) => void
+}) {
   const { data: stats } = useStats()
   const { data: profile } = useProfile()
   const { data: routines, refetch: refetchRoutines } = useRoutines()
@@ -144,13 +149,13 @@ export function Home({ onNavigate }: { onNavigate: (t: Tab) => void }) {
           <StatTile
             icon={<Clock className="h-4 w-4" />}
             label="Time"
-            value={`${Math.floor(stats.thisWeek.minutes / 60)}h ${stats.thisWeek.minutes % 60}m`}
+            value={fmtMinutes(stats.thisWeek.minutes)}
             delta={`${signed(stats.thisWeek.minutes - stats.lastWeek.minutes)}m`}
             trend={trend(stats.thisWeek.minutes, stats.lastWeek.minutes)}
           />
           <StatTile
             icon={<Trophy className="h-4 w-4" />}
-            label="New PRs"
+            label="New PR's"
             value={`${stats.thisWeek.prCount}`}
             delta={signed(stats.thisWeek.prCount - stats.lastWeek.prCount)}
             trend={trend(stats.thisWeek.prCount, stats.lastWeek.prCount)}
@@ -208,14 +213,14 @@ export function Home({ onNavigate }: { onNavigate: (t: Tab) => void }) {
       {/* Recent PRs */}
       <div className="px-5 pb-2">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-muted-foreground">Recent PRs</h2>
-          <button className="text-xs font-semibold text-primary" onClick={() => onNavigate("stats")}>
+          <h2 className="text-sm font-semibold text-muted-foreground">Recent PR's</h2>
+          <button className="text-xs font-semibold text-primary" onClick={() => onNavigate("stats", { statsTab: "prs" })}>
             View all
           </button>
         </div>
         {personalRecords.length === 0 ? (
           <Card className="p-5 text-center text-xs text-muted-foreground">
-            Complete sets in the gym — your PRs will show up here.
+            Complete sets in the gym — your PR's will show up here.
           </Card>
         ) : (
           <div className="flex flex-col gap-2">

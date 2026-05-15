@@ -1,27 +1,48 @@
 import * as React from "react"
 import {
-  Settings, Bell, Sun, Moon, Monitor, Download, Share2, LogOut, ChevronRight, Weight, Target, Calendar,
+  Settings, Bell, Sun, Moon, Monitor, Download, Share2, LogOut, ChevronRight, Weight, Target, Calendar, Loader2,
 } from "lucide-react"
 import { ScreenHeader } from "@/components/ScreenHeader"
 import { Card } from "@/components/ui/card"
 import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useAuth } from "@/lib/auth"
-import { useProfile, useStats, usePersonalRecords } from "@/lib/api"
+import { useProfile, useStats, usePersonalRecords, clearMyData } from "@/lib/api"
 import { ProfileEditSheet } from "@/components/ProfileEditSheet"
 import { AppearanceSheet } from "@/components/AppearanceSheet"
 import { useTheme } from "@/lib/theme"
 
 export function Profile() {
-  const { signOut } = useAuth()
+  const { signOut, user } = useAuth()
   const { data: profile, refetch: refetchProfile } = useProfile()
-  const { data: stats } = useStats()
-  const { data: prs } = usePersonalRecords()
+  const { data: stats, refetch: refetchStats } = useStats()
+  const { data: prs, refetch: refetchPrs } = usePersonalRecords()
   const [editing, setEditing] = React.useState(false)
   const [appearanceOpen, setAppearanceOpen] = React.useState(false)
+  const [confirmClear, setConfirmClear] = React.useState(false)
+  const [clearing, setClearing] = React.useState(false)
+  const [clearError, setClearError] = React.useState<string | null>(null)
   const { mode } = useTheme()
   const appearanceIcon = mode === "dark" ? <Moon /> : mode === "light" ? <Sun /> : <Monitor />
   const appearanceLabel = mode === "dark" ? "Dark" : mode === "light" ? "Light" : "System"
+
+  const doClearData = async () => {
+    if (!user) return
+    setClearing(true)
+    setClearError(null)
+    try {
+      await clearMyData(user.id)
+      setConfirmClear(false)
+      refetchStats()
+      refetchPrs()
+    } catch (e: any) {
+      setClearError(e?.message ?? "Failed to clear data")
+    } finally {
+      setClearing(false)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -50,7 +71,7 @@ export function Profile() {
             <div className="mt-4 grid grid-cols-3 divide-x divide-border rounded-xl bg-secondary/60 py-3">
               <Mini label="Workouts" value={`${stats.totalWorkouts}`} />
               <Mini label="Streak" value={`${stats.streak}w`} />
-              <Mini label="PRs" value={`${prs.length}`} />
+              <Mini label="PR's" value={`${prs.length}`} />
             </div>
           </div>
         </Card>
@@ -107,6 +128,15 @@ export function Profile() {
           <Row icon={<LogOut />} label="Sign out" variant="destructive" onClick={signOut} />
         </Card>
 
+        <Button
+          variant="destructive"
+          onClick={() => { setClearError(null); setConfirmClear(true) }}
+          disabled={clearing}
+          className="mt-5 w-full"
+        >
+          {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Clear My Data"}
+        </Button>
+
         <p className="mt-6 text-center text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
           Forge · v0.1.0
         </p>
@@ -120,6 +150,17 @@ export function Profile() {
       />
 
       <AppearanceSheet open={appearanceOpen} onOpenChange={setAppearanceOpen} />
+
+      <ConfirmDialog
+        open={confirmClear}
+        onOpenChange={(o) => { if (!o) { setConfirmClear(false); setClearError(null) } }}
+        title="Clear all your data?"
+        description="This permanently deletes your workouts, routines, custom exercises, and any renamed exercise names. Your profile (name, bodyweight, goal) is kept. This can't be undone."
+        confirmLabel="Clear everything"
+        busy={clearing}
+        error={clearError}
+        onConfirm={doClearData}
+      />
     </div>
   )
 }

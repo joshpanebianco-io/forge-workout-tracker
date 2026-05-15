@@ -250,7 +250,7 @@ export function RoutineSheet({
         onPick={(picked) => {
           setItems((arr) => [
             ...arr,
-            ...picked.map((p) => ({ exerciseId: p.id, sets: 3, targetReps: "8-10" })),
+            ...picked.map((p) => ({ exerciseId: p.id, sets: 4, targetReps: "8" })),
           ])
           setPickCache((prev) => {
             const next = new Map(prev)

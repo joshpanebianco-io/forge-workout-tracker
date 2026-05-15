@@ -14,6 +14,35 @@ export type Database = {
   }
   public: {
     Tables: {
+      exercise_overrides: {
+        Row: {
+          exercise_id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          exercise_id: string
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          exercise_id?: string
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exercise_overrides_exercise_id_fkey"
+            columns: ["exercise_id"]
+            isOneToOne: false
+            referencedRelation: "exercises"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       exercises: {
         Row: {
           created_at: string

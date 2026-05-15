@@ -1,9 +1,11 @@
 import * as React from "react"
 import {
   Trophy, TrendingUp, TrendingDown, ChevronRight, Activity, Dumbbell, Clock, Flame,
+  BarChart3, PieChart as PieChartIcon,
 } from "lucide-react"
 import {
   Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
+  PieChart, Pie, Cell,
 } from "recharts"
 import { ScreenHeader } from "@/components/ScreenHeader"
 import { Card } from "@/components/ui/card"
@@ -14,7 +16,8 @@ import {
   type TrainedExercise, type TrendsPeriod,
 } from "@/lib/api"
 import { ExerciseProgressPickerSheet } from "@/components/ExerciseProgressPickerSheet"
-import { relativeDay } from "@/lib/utils"
+import { WorkoutDetailSheet } from "@/components/WorkoutDetailSheet"
+import { relativeDay, fmtMinutes, formatTime } from "@/lib/utils"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
@@ -32,9 +35,25 @@ const MUSCLE_COLORS: Record<string, string> = {
   "Full Body": "from-indigo-400 to-indigo-500",
 }
 
+const MUSCLE_HEX: Record<string, [string, string]> = {
+  Chest: ["#fb7185", "#f43f5e"],
+  Back: ["#60a5fa", "#3b82f6"],
+  Shoulders: ["#fbbf24", "#f59e0b"],
+  Biceps: ["#a78bfa", "#8b5cf6"],
+  Triceps: ["#e879f9", "#d946ef"],
+  Quads: ["#34d399", "#10b981"],
+  Hamstrings: ["#2dd4bf", "#14b8a6"],
+  Glutes: ["#f472b6", "#ec4899"],
+  Calves: ["#22d3ee", "#06b6d4"],
+  Core: ["#fb923c", "#f97316"],
+  "Full Body": ["#818cf8", "#6366f1"],
+}
+
+const slugify = (s: string) => s.replace(/\s+/g, "-").toLowerCase()
+
 type ProgressMetric = "est1rm" | "topweight"
 
-export function Stats() {
+export function Stats({ initialTab }: { initialTab?: string } = {}) {
   const { data: personalRecords } = usePersonalRecords()
   const { data: stats } = useStats()
   const { data: trained } = useTrainedExercises()
@@ -52,14 +71,14 @@ export function Stats() {
 
   return (
     <div className="flex flex-col gap-4 pb-2">
-      <ScreenHeader title="Stats" subtitle="Progress & PRs" />
+      <ScreenHeader title="Stats" subtitle="Progress & PR's" />
 
       <div className="px-5">
-        <Tabs defaultValue="overview">
+        <Tabs defaultValue={initialTab ?? "overview"}>
           <TabsList className="w-full">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="progress">Progress</TabsTrigger>
-            <TabsTrigger value="prs">PRs</TabsTrigger>
+            <TabsTrigger value="prs">PR's</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -109,6 +128,7 @@ function OverviewTab({
   chart: ChartTheme
 }) {
   const [period, setPeriod] = React.useState<TrendsPeriod>("1W")
+  const [muscleView, setMuscleView] = React.useState<"bars" | "pie">("bars")
   const { data, loading } = useTrends(period)
   const isWeek = period === "1W"
   const weeksInPeriod = data.summary.weeksInPeriod || 1
@@ -134,7 +154,7 @@ function OverviewTab({
           <>
             <DeltaTile
               icon={<Dumbbell className="h-3.5 w-3.5" />}
-              label="Sessions"
+              label="Workouts"
               value={`${stats.thisWeek.workouts}`}
               delta={stats.thisWeek.workouts - stats.lastWeek.workouts}
             />
@@ -148,7 +168,7 @@ function OverviewTab({
             <DeltaTile
               icon={<Clock className="h-3.5 w-3.5" />}
               label="Time"
-              value={fmtTime(stats.thisWeek.minutes)}
+              value={fmtMinutes(stats.thisWeek.minutes)}
               delta={stats.thisWeek.minutes - stats.lastWeek.minutes}
               deltaSuffix="m"
             />
@@ -163,7 +183,7 @@ function OverviewTab({
           <>
             <SummaryTile
               icon={<Dumbbell className="h-3.5 w-3.5" />}
-              label="Sessions"
+              label="Workouts"
               value={`${data.summary.sessions}`}
               sub={`${data.summary.avgSessionsPerWeek.toFixed(1)} / wk avg`}
             />
@@ -175,7 +195,7 @@ function OverviewTab({
             />
             <SummaryTile
               icon={<Clock className="h-3.5 w-3.5" />}
-              label="Avg session"
+              label="Avg workout"
               value={fmtMinutes(data.summary.avgSessionMinutes)}
               sub={`${fmtMinutes(data.summary.totalMinutes)} total`}
             />
@@ -195,7 +215,7 @@ function OverviewTab({
         <Card className="p-6 text-center text-sm text-muted-foreground">
           <Activity className="mx-auto mb-2 h-7 w-7 opacity-60" strokeWidth={1.5} />
           <p className="font-semibold text-foreground">
-            {isWeek ? "No sessions yet this week" : "No sessions in this range"}
+            {isWeek ? "No workouts yet this week" : "No workouts in this range"}
           </p>
           <p className="mt-1 text-xs">
             {isWeek ? "Start a workout to see your week take shape." : "Try a longer period."}
@@ -206,44 +226,71 @@ function OverviewTab({
           {/* Muscle breakdown */}
           {data.muscleAvg.length > 0 && (
             <Card className="p-4">
-              <div className="mb-3">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Sets per muscle
-                </p>
-                <p className="mt-1 text-base font-bold">
-                  {data.muscleAvg.length} {data.muscleAvg.length === 1 ? "group" : "groups"}
-                  <span className="ml-1 text-xs font-normal text-muted-foreground">
-                    · {PERIOD_PHRASE[period]}
-                  </span>
-                </p>
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Sets per muscle
+                  </p>
+                  <p className="mt-1 text-base font-bold">
+                    {data.muscleAvg.length} {data.muscleAvg.length === 1 ? "group" : "groups"}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      · {PERIOD_PHRASE[period]}
+                    </span>
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-secondary/60 p-0.5 ring-inset-border">
+                  <ViewToggleBtn
+                    active={muscleView === "bars"}
+                    onClick={() => setMuscleView("bars")}
+                    label="Bars view"
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" />
+                  </ViewToggleBtn>
+                  <ViewToggleBtn
+                    active={muscleView === "pie"}
+                    onClick={() => setMuscleView("pie")}
+                    label="Pie view"
+                  >
+                    <PieChartIcon className="h-3.5 w-3.5" />
+                  </ViewToggleBtn>
+                </div>
               </div>
-              <div className="flex flex-col gap-3">
-                {data.muscleAvg.map((r) => {
-                  const pct = Math.min(100, (r.avgSetsPerWeek / 25) * 100)
-                  return (
-                    <div key={r.muscle}>
-                      <div className="mb-1 flex items-center justify-between text-xs">
-                        <span className="font-semibold">{r.muscle}</span>
-                        <span className="num text-muted-foreground">
-                          <span className="font-semibold text-foreground">
-                            {isWeek ? r.totalSets : r.avgSetsPerWeek.toFixed(1)}
+
+              {muscleView === "bars" ? (
+                <div className="flex flex-col gap-3">
+                  {data.muscleAvg.map((r) => {
+                    const pct = Math.min(100, (r.avgSetsPerWeek / 25) * 100)
+                    return (
+                      <div key={r.muscle}>
+                        <div className="mb-1 flex items-center justify-between text-xs">
+                          <span className="font-semibold">{r.muscle}</span>
+                          <span className="num text-muted-foreground">
+                            <span className="font-semibold text-foreground">
+                              {isWeek ? r.totalSets : r.avgSetsPerWeek.toFixed(1)}
+                            </span>
+                            {" "}sets{isWeek ? "" : "/wk"}
+                            {!isWeek && (
+                              <> · <span className="font-semibold text-foreground">{r.totalSets}</span> total</>
+                            )}
                           </span>
-                          {" "}sets{isWeek ? "" : "/wk"}
-                          {!isWeek && (
-                            <> · <span className="font-semibold text-foreground">{r.totalSets}</span> total</>
-                          )}
-                        </span>
+                        </div>
+                        <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className={`relative h-full rounded-full bg-gradient-to-r ${MUSCLE_COLORS[r.muscle] ?? "from-blue-400 to-indigo-500"}`}
+                            style={{ width: `${Math.max(4, pct)}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
-                        <div
-                          className={`relative h-full rounded-full bg-gradient-to-r ${MUSCLE_COLORS[r.muscle] ?? "from-blue-400 to-indigo-500"}`}
-                          style={{ width: `${Math.max(4, pct)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <MusclePie
+                  rows={data.muscleAvg}
+                  isWeek={isWeek}
+                  chart={chart}
+                />
+              )}
             </Card>
           )}
 
@@ -252,7 +299,7 @@ function OverviewTab({
             <Card className="p-0">
               <div className="flex items-end justify-between border-b border-border px-4 py-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {isWeek ? "PRs this week" : "PRs in this range"}
+                  {isWeek ? "PR's this week" : "PR's in this range"}
                 </p>
                 <p className="num text-[11px] font-semibold text-muted-foreground">
                   {data.prs.length}
@@ -283,7 +330,7 @@ function OverviewTab({
                 ))}
                 {data.prs.length > 8 && (
                   <p className="px-4 py-2 text-center text-[11px] text-muted-foreground">
-                    +{data.prs.length - 8} more in PRs tab
+                    +{data.prs.length - 8} more in PR's tab
                   </p>
                 )}
               </div>
@@ -304,6 +351,7 @@ function ProgressTab({
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = React.useState(false)
   const [metric, setMetric] = React.useState<ProgressMetric>("topweight")
+  const [openWorkoutId, setOpenWorkoutId] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (selectedId) return
@@ -311,7 +359,7 @@ function ProgressTab({
   }, [trained, selectedId])
 
   const selected = trained.find((e) => e.id === selectedId) ?? null
-  const { data: points, loading } = useExerciseProgress(selectedId)
+  const { data: points, loading, refetch: refetchProgress } = useExerciseProgress(selectedId)
 
   if (trained.length === 0) {
     return (
@@ -366,7 +414,7 @@ function ProgressTab({
           {selected && (
             <p className="mt-0.5 text-xs text-muted-foreground">
               {selected.muscle} · {selected.sessionCount}{" "}
-              {selected.sessionCount === 1 ? "session" : "sessions"}
+              {selected.sessionCount === 1 ? "workout" : "workouts"}
               {selected.lastTrained && ` · ${relativeDay(selected.lastTrained)}`}
             </p>
           )}
@@ -459,40 +507,52 @@ function ProgressTab({
               </div>
             ) : (
               <p className="mt-6 text-center text-xs text-muted-foreground">
-                Log another session to see a trend.
+                Log another workout to see a trend.
               </p>
             )}
           </>
         )}
       </Card>
 
-      {/* Recent sessions */}
+      {/* Recent workouts */}
       {points.length > 0 && (
         <Card className="p-0">
           <div className="border-b border-border px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Recent sessions
+              Recent workouts
             </p>
           </div>
           <div className="divide-y divide-border">
             {[...points].reverse().slice(0, 6).map((p) => (
-              <div key={p.date} className="flex items-center justify-between px-4 py-3">
+              <button
+                key={p.workoutId}
+                onClick={() => setOpenWorkoutId(p.workoutId)}
+                className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-secondary/40"
+              >
                 <div>
-                  <p className="text-sm font-semibold">{shortDate(p.date)}</p>
+                  <p className="text-sm font-semibold">
+                    {shortDate(p.date)}
+                    <span className="num ml-1.5 text-[11px] font-normal text-muted-foreground">
+                      {formatTime(p.date)}
+                    </span>
+                  </p>
                   <p className="text-[11px] text-muted-foreground">
                     {p.totalSets} {p.totalSets === 1 ? "set" : "sets"}
                   </p>
                 </div>
-                <div className="text-right">
-                  <p className="num text-sm font-bold">
-                    {p.topWeight}
-                    <span className="text-[10px] text-muted-foreground"> kg × {p.topReps}</span>
-                  </p>
-                  <p className="num text-[11px] text-muted-foreground">
-                    est. {p.est1RM}kg
-                  </p>
+                <div className="flex items-center gap-2">
+                  <div className="text-right">
+                    <p className="num text-sm font-bold">
+                      {p.topWeight}
+                      <span className="text-[10px] text-muted-foreground"> kg × {p.topReps}</span>
+                    </p>
+                    <p className="num text-[11px] text-muted-foreground">
+                      est. {p.est1RM}kg
+                    </p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </Card>
@@ -504,6 +564,12 @@ function ProgressTab({
         selectedId={selectedId}
         onPick={(e) => setSelectedId(e.id)}
       />
+
+      <WorkoutDetailSheet
+        workoutId={openWorkoutId}
+        onOpenChange={(o) => !o && setOpenWorkoutId(null)}
+        onDeleted={() => refetchProgress()}
+      />
     </div>
   )
 }
@@ -511,17 +577,29 @@ function ProgressTab({
 // ---------------------------------------------------------------------
 // PRs
 // ---------------------------------------------------------------------
+const PR_PAGE_SIZE = 10
+
 function PRsTab({ personalRecords }: { personalRecords: ReturnType<typeof usePersonalRecords>["data"] }) {
+  const [visible, setVisible] = React.useState(PR_PAGE_SIZE)
+
+  React.useEffect(() => {
+    setVisible(PR_PAGE_SIZE)
+  }, [personalRecords.length])
+
   if (personalRecords.length === 0) {
     return (
       <Card className="p-6 text-center text-sm text-muted-foreground">
-        No PRs yet — complete sets to start tracking.
+        No PR's yet — complete sets to start tracking.
       </Card>
     )
   }
+
+  const shown = personalRecords.slice(0, visible)
+  const remaining = personalRecords.length - shown.length
+
   return (
     <div className="flex flex-col gap-2">
-      {personalRecords.map((pr) => (
+      {shown.map((pr) => (
         <Card key={pr.exerciseId} className="flex items-center gap-3 p-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 ring-1 ring-amber-200">
             <Trophy className="h-5 w-5 text-amber-600" />
@@ -543,6 +621,19 @@ function PRsTab({ personalRecords }: { personalRecords: ReturnType<typeof usePer
           </div>
         </Card>
       ))}
+
+      {remaining > 0 && (
+        <button
+          onClick={() => setVisible((v) => v + PR_PAGE_SIZE)}
+          className="mt-1 rounded-xl border border-dashed border-border bg-card/60 py-2.5 text-xs font-semibold text-muted-foreground hover:bg-card hover:text-foreground"
+        >
+          Show {Math.min(PR_PAGE_SIZE, remaining)} more · {remaining} left
+        </button>
+      )}
+
+      <p className="mt-1 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
+        {shown.length} of {personalRecords.length}
+      </p>
     </div>
   )
 }
@@ -688,25 +779,116 @@ function DeltaPill({ value, pct, unit }: { value: number; pct: number; unit: str
         <Icon className="h-3 w-3" />
         {positive ? "+" : ""}{value}{unit} · {positive ? "+" : ""}{pct.toFixed(1)}%
       </span>
-      <p className="mt-1 text-[10px] text-muted-foreground">since first session</p>
+      <p className="mt-1 text-[10px] text-muted-foreground">since first workout</p>
     </div>
   )
 }
 
-function fmtTime(minutes: number) {
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  return `${h}:${String(m).padStart(2, "0")}`
-}
-
-function fmtMinutes(min: number) {
-  const m = Math.round(min)
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60)
-  const r = m % 60
-  return r === 0 ? `${h}h` : `${h}h ${r}m`
-}
-
 function shortDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+function ViewToggleBtn({
+  active, onClick, label, children,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground"
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function MusclePie({
+  rows, isWeek, chart,
+}: {
+  rows: { muscle: string; totalSets: number; avgSetsPerWeek: number }[]
+  isWeek: boolean
+  chart: ChartTheme
+}) {
+  const data = rows.map((r) => ({
+    muscle: r.muscle,
+    value: isWeek ? r.totalSets : Number(r.avgSetsPerWeek.toFixed(1)),
+  }))
+  const total = data.reduce((s, d) => s + d.value, 0)
+
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div className="h-56 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+            <defs>
+              {rows.map((r) => {
+                const [c0, c1] = MUSCLE_HEX[r.muscle] ?? ["#60a5fa", "#6366f1"]
+                return (
+                  <linearGradient
+                    key={r.muscle}
+                    id={`pieGrad-${slugify(r.muscle)}`}
+                    x1="0" y1="0" x2="1" y2="1"
+                  >
+                    <stop offset="0%" stopColor={c0} />
+                    <stop offset="100%" stopColor={c1} />
+                  </linearGradient>
+                )
+              })}
+            </defs>
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="muscle"
+              innerRadius="55%"
+              outerRadius="85%"
+              paddingAngle={2}
+              stroke="none"
+              isAnimationActive={false}
+            >
+              {data.map((d) => (
+                <Cell
+                  key={d.muscle}
+                  fill={`url(#pieGrad-${slugify(d.muscle)})`}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={tooltipStyle(chart)}
+              labelStyle={{ color: chart.tooltipText, fontWeight: 600 }}
+              itemStyle={{ color: chart.tooltipText }}
+              formatter={(v, name) => [`${v} sets${isWeek ? "" : "/wk"}`, name as string]}
+              separator=" — "
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="grid w-full grid-cols-2 gap-x-3 gap-y-1.5">
+        {data.map((d) => {
+          const [c0, c1] = MUSCLE_HEX[d.muscle] ?? ["#60a5fa", "#6366f1"]
+          const pct = total > 0 ? (d.value / total) * 100 : 0
+          return (
+            <div key={d.muscle} className="flex items-center gap-2 text-[11px]">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                style={{ background: `linear-gradient(135deg, ${c0}, ${c1})` }}
+              />
+              <span className="truncate font-semibold">{d.muscle}</span>
+              <span className="num ml-auto text-muted-foreground">{pct.toFixed(0)}%</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }

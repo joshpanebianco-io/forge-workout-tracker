@@ -10,9 +10,22 @@ export function formatWeight(kg: number) {
   return kg % 1 === 0 ? `${kg}` : kg.toFixed(1)
 }
 
+export function fmtMinutes(min: number) {
+  const m = Math.round(min)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  const r = m % 60
+  return r === 0 ? `${h}h` : `${h}h ${r}m`
+}
+
 export function formatDate(d: Date | string) {
   const date = typeof d === "string" ? new Date(d) : d
   return date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })
+}
+
+export function formatTime(d: Date | string) {
+  const date = typeof d === "string" ? new Date(d) : d
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
 }
 
 export function relativeDay(d: Date | string) {
