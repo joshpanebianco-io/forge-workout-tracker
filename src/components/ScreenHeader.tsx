@@ -8,12 +8,12 @@ export function ScreenHeader({
   className,
 }: {
   title: string
-  subtitle?: string
+  subtitle?: React.ReactNode
   right?: React.ReactNode
   className?: string
 }) {
   return (
-    <div className={cn("flex items-end justify-between px-5 pt-2 pb-4", className)}>
+    <div className={cn("flex items-end justify-between px-5 pt-5 pb-4", className)}>
       <div>
         {subtitle && (
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">

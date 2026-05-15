@@ -1,6 +1,9 @@
 import * as React from "react"
 import { supabase } from "./supabase"
 import { useAuth } from "./auth"
+import {
+  addDays, startOfWeek, startOfMonth, startOfDay, localDayKey, localMonthKey,
+} from "./utils"
 import type {
   Exercise, ExerciseLog, MuscleGroup, PR, Routine, SetEntry, Workout,
 } from "./types"
@@ -119,7 +122,7 @@ export function useRoutines() {
         id, name, description, schedule, color,
         routine_exercises ( exercise_id, position, target_sets, target_reps )
       `)
-      .order("created_at", { ascending: true })
+      .order("position", { ascending: true })
     if (error) throw error
     return (data ?? []).map((r) => ({
       id: r.id,
@@ -202,7 +205,7 @@ export function useRecentWorkouts(limit = 20) {
 export function useWeeklyWorkouts(weekStart: Date) {
   const { user } = useAuth()
   const startIso = weekStart.toISOString()
-  const endIso = new Date(weekStart.getTime() + 7 * 86_400_000).toISOString()
+  const endIso = addDays(weekStart, 7).toISOString()
   const epoch = useOverrideEpoch()
   return useAsync<Workout[]>(async () => {
     if (!user) return []
@@ -333,14 +336,6 @@ export type Stats = {
   totalWorkouts: number
 }
 
-function startOfWeek(d: Date) {
-  const x = new Date(d)
-  x.setHours(0, 0, 0, 0)
-  const day = (x.getDay() + 6) % 7 // Mon=0
-  x.setDate(x.getDate() - day)
-  return x
-}
-
 export function useStats() {
   const { user } = useAuth()
   return useAsync<Stats>(async () => {
@@ -358,8 +353,7 @@ export function useStats() {
       .not("ended_at", "is", null)
 
     const thisWeekStart = startOfWeek(new Date())
-    const lastWeekStart = new Date(thisWeekStart)
-    lastWeekStart.setDate(lastWeekStart.getDate() - 7)
+    const lastWeekStart = addDays(thisWeekStart, -7)
 
     const { data: recent } = await supabase
       .from("workouts")
@@ -405,14 +399,13 @@ export function useStats() {
 
     const weekKeys = new Set<string>()
     for (const w of allDates ?? []) {
-      const k = startOfWeek(new Date(w.started_at)).toISOString().slice(0, 10)
-      weekKeys.add(k)
+      weekKeys.add(localDayKey(startOfWeek(new Date(w.started_at))))
     }
     let streak = 0
     let cursor = startOfWeek(new Date())
-    while (weekKeys.has(cursor.toISOString().slice(0, 10))) {
+    while (weekKeys.has(localDayKey(cursor))) {
       streak++
-      cursor.setDate(cursor.getDate() - 7)
+      cursor = addDays(cursor, -7)
     }
 
     return {
@@ -756,13 +749,6 @@ function periodStart(period: TrendsPeriod, earliest: Date | null): Date {
   return d
 }
 
-function startOfMonth(d: Date) {
-  const x = new Date(d)
-  x.setDate(1)
-  x.setHours(0, 0, 0, 0)
-  return x
-}
-
 export function useTrends(period: TrendsPeriod) {
   const { user } = useAuth()
   return useAsync<TrendsData>(async () => {
@@ -836,13 +822,10 @@ export function useTrends(period: TrendsPeriod) {
     }
     const buckets = new Map<string, Bucket>()
 
-    const startOfDay = (d: Date) => {
-      const x = new Date(d); x.setHours(0, 0, 0, 0); return x
-    }
     const makeKey = (d: Date) => {
-      if (useDaily) return startOfDay(d).toISOString().slice(0, 10)
-      return useMonthly ? startOfMonth(d).toISOString().slice(0, 7)
-                        : startOfWeek(d).toISOString().slice(0, 10)
+      if (useDaily) return localDayKey(startOfDay(d))
+      return useMonthly ? localMonthKey(startOfMonth(d))
+                        : localDayKey(startOfWeek(d))
     }
     const makeLabel = (d: Date) => {
       if (useDaily) return d.toLocaleDateString(undefined, { weekday: "short" })
@@ -1196,6 +1179,16 @@ export async function discardWorkout(workoutId: string) {
   if (error) throw error
 }
 
+export async function updateWorkoutTitle(workoutId: string, title: string) {
+  const trimmed = title.trim()
+  if (!trimmed) throw new Error("Title required")
+  const { error } = await supabase
+    .from("workouts")
+    .update({ title: trimmed })
+    .eq("id", workoutId)
+  if (error) throw error
+}
+
 // ---------------------------------------------------------------------
 // exercise mutations
 // ---------------------------------------------------------------------
@@ -1266,6 +1259,14 @@ export type RoutineDraft = {
 }
 
 export async function createRoutine(userId: string, draft: RoutineDraft) {
+  const { data: existing, error: pErr } = await supabase
+    .from("routines")
+    .select("position")
+    .eq("user_id", userId)
+    .order("position", { ascending: false })
+    .limit(1)
+  if (pErr) throw pErr
+  const position = (existing?.[0]?.position ?? 0) + 1
   const { data: r, error } = await supabase
     .from("routines")
     .insert({
@@ -1274,6 +1275,7 @@ export async function createRoutine(userId: string, draft: RoutineDraft) {
       description: draft.description ?? null,
       schedule: draft.schedule ?? null,
       color: draft.color,
+      position,
     })
     .select("id")
     .single()
@@ -1318,6 +1320,28 @@ export async function updateRoutine(routineId: string, draft: RoutineDraft) {
 export async function deleteRoutine(routineId: string) {
   const { error } = await supabase.from("routines").delete().eq("id", routineId)
   if (error) throw error
+}
+
+// Two-pass to dodge UNIQUE(user_id, position): park at negatives, then commit.
+export async function reorderRoutines(orderedIds: string[]) {
+  await Promise.all(
+    orderedIds.map(async (id, i) => {
+      const { error } = await supabase
+        .from("routines")
+        .update({ position: -(i + 1) })
+        .eq("id", id)
+      if (error) throw error
+    })
+  )
+  await Promise.all(
+    orderedIds.map(async (id, i) => {
+      const { error } = await supabase
+        .from("routines")
+        .update({ position: i + 1 })
+        .eq("id", id)
+      if (error) throw error
+    })
+  )
 }
 
 // ---------------------------------------------------------------------

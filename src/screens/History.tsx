@@ -144,7 +144,7 @@ export function History() {
         <Card className="grid grid-cols-3 divide-x divide-border/60 p-0">
           <Mini big={`${summary.sessions}`} label="Sessions" />
           <Mini big={fmtHours(summary.minutes)} label="Time" />
-          <Mini big={`${summary.prCount}`} label="PR's" />
+          <Mini big={`${summary.prCount}`} label={<span className="normal-case">PRs</span>} />
         </Card>
       </div>
 
@@ -226,6 +226,7 @@ export function History() {
         workoutId={openId}
         onOpenChange={(o) => !o && setOpenId(null)}
         onDeleted={() => { refetchWeek(); refetchStats(); refetchHistory() }}
+        onChanged={() => { refetchWeek(); refetchStats() }}
       />
 
       <DatePickerSheet
@@ -255,7 +256,7 @@ function Cell({ big, label }: { big: string; label: string }) {
   )
 }
 
-function Mini({ big, label }: { big: string; label: string }) {
+function Mini({ big, label }: { big: string; label: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-0.5 py-3">
       <p className="num text-sm font-bold leading-tight">{big}</p>

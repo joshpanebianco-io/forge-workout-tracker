@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Flame, ChevronRight, Trophy, TrendingUp, Clock, Dumbbell, Plus, Loader2 } from "lucide-react"
+import { Flame, ChevronRight, Trophy, Plus, Loader2 } from "lucide-react"
 import { ScreenHeader } from "@/components/ScreenHeader"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -9,9 +9,9 @@ import { Avatar } from "@/components/ui/avatar"
 import {
   useStats, useProfile, useRoutines, useActiveWorkout, usePersonalRecords,
 } from "@/lib/api"
-import { fmtMinutes } from "@/lib/utils"
 import { RoutineSheet } from "@/components/RoutineSheet"
 import { RoutineListSheet } from "@/components/RoutineListSheet"
+import { WeekStatsGrid } from "@/components/WeekStatsGrid"
 import type { Tab } from "@/components/BottomNav"
 import type { Routine } from "@/lib/types"
 
@@ -131,36 +131,11 @@ export function Home({
       {/* Quick stats */}
       <div className="px-5">
         <h2 className="mb-2 text-sm font-semibold text-muted-foreground">This week</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <StatTile
-            icon={<Dumbbell className="h-4 w-4" />}
-            label="Workouts"
-            value={`${stats.thisWeek.workouts}`}
-            delta={signed(stats.thisWeek.workouts - stats.lastWeek.workouts)}
-            trend={trend(stats.thisWeek.workouts, stats.lastWeek.workouts)}
-          />
-          <StatTile
-            icon={<Flame className="h-4 w-4" />}
-            label="Streak"
-            value={`${stats.streak}`}
-            delta={stats.streak === 0 ? "" : stats.streak === 1 ? "week" : "weeks"}
-            trend="flat"
-          />
-          <StatTile
-            icon={<Clock className="h-4 w-4" />}
-            label="Time"
-            value={fmtMinutes(stats.thisWeek.minutes)}
-            delta={`${signed(stats.thisWeek.minutes - stats.lastWeek.minutes)}m`}
-            trend={trend(stats.thisWeek.minutes, stats.lastWeek.minutes)}
-          />
-          <StatTile
-            icon={<Trophy className="h-4 w-4" />}
-            label="New PR's"
-            value={`${stats.thisWeek.prCount}`}
-            delta={signed(stats.thisWeek.prCount - stats.lastWeek.prCount)}
-            trend={trend(stats.thisWeek.prCount, stats.lastWeek.prCount)}
-          />
-        </div>
+        <WeekStatsGrid
+          thisWeek={stats.thisWeek}
+          lastWeek={stats.lastWeek}
+          onTileClick={() => onNavigate("stats", { statsTab: "overview" })}
+        />
       </div>
 
       {/* Routines */}
@@ -213,14 +188,14 @@ export function Home({
       {/* Recent PRs */}
       <div className="px-5 pb-2">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-muted-foreground">Recent PR's</h2>
+          <h2 className="text-sm font-semibold text-muted-foreground">Recent PRs</h2>
           <button className="text-xs font-semibold text-primary" onClick={() => onNavigate("stats", { statsTab: "prs" })}>
             View all
           </button>
         </div>
         {personalRecords.length === 0 ? (
           <Card className="p-5 text-center text-xs text-muted-foreground">
-            Complete sets in the gym — your PR's will show up here.
+            Complete sets in the gym — your PRs will show up here.
           </Card>
         ) : (
           <div className="flex flex-col gap-2">
@@ -260,35 +235,9 @@ export function Home({
         routines={routines}
         onSelect={(r) => setRoutineSheet({ open: true, routine: r })}
         onCreate={() => setRoutineSheet({ open: true, routine: null })}
+        onChanged={refetchRoutines}
       />
     </div>
   )
 }
 
-function signed(n: number, decimals = 0) {
-  const fixed = decimals ? n.toFixed(decimals) : `${n}`
-  return n > 0 ? `+${fixed}` : fixed
-}
-function trend(a: number, b: number): "up" | "flat" | "down" {
-  if (a > b) return "up"
-  if (a < b) return "down"
-  return "flat"
-}
-
-function StatTile({
-  icon, label, value, delta, trend,
-}: { icon: React.ReactNode; label: string; value: string; delta: string; trend: "up" | "flat" | "down" }) {
-  const color = trend === "up" ? "text-emerald-600" : trend === "down" ? "text-red-500" : "text-muted-foreground"
-  return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between">
-        <span className="tint-blue flex h-7 w-7 items-center justify-center rounded-lg">
-          {icon}
-        </span>
-        <span className={`text-[10px] font-semibold ${color}`}>{delta}</span>
-      </div>
-      <p className="num mt-3 text-2xl font-bold leading-none">{value}</p>
-      <p className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
-    </Card>
-  )
-}

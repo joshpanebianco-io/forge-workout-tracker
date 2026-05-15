@@ -1,29 +1,33 @@
 import * as React from "react"
-import { Clock, Dumbbell, Flame, Trophy, Trash2, Loader2 } from "lucide-react"
+import { Clock, Dumbbell, Flame, Trophy, Trash2, Loader2, Pencil } from "lucide-react"
 import { Sheet } from "@/components/ui/sheet"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useWorkout, discardWorkout } from "@/lib/api"
+import { WorkoutTitleEditSheet } from "@/components/WorkoutTitleEditSheet"
 import { relativeDay, formatTime } from "@/lib/utils"
 
 export function WorkoutDetailSheet({
-  workoutId, onOpenChange, onDeleted,
+  workoutId, onOpenChange, onDeleted, onChanged,
 }: {
   workoutId: string | null
   onOpenChange: (o: boolean) => void
   onDeleted?: () => void
+  onChanged?: () => void
 }) {
-  const { data: w, loading } = useWorkout(workoutId)
+  const { data: w, loading, refetch } = useWorkout(workoutId)
   const open = workoutId !== null
   const [confirmOpen, setConfirmOpen] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [deleteError, setDeleteError] = React.useState<string | null>(null)
+  const [renameOpen, setRenameOpen] = React.useState(false)
 
   React.useEffect(() => {
     if (!open) {
       setConfirmOpen(false)
       setDeleteError(null)
+      setRenameOpen(false)
     }
   }, [open])
 
@@ -49,11 +53,19 @@ export function WorkoutDetailSheet({
         <div className="py-8 text-center text-xs text-muted-foreground">Loading…</div>
       ) : (
         <div className="flex flex-col gap-3">
-          <p className="text-xs text-muted-foreground">
-            {relativeDay(w.date)} · {new Date(w.date).toLocaleDateString(undefined, {
-              weekday: "short", day: "numeric", month: "short", year: "numeric",
-            })} <span className="num">· {formatTime(w.date)}</span>
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="flex-1 text-xs text-muted-foreground">
+              {relativeDay(w.date)} · {new Date(w.date).toLocaleDateString(undefined, {
+                weekday: "short", day: "numeric", month: "short", year: "numeric",
+              })} <span className="num">· {formatTime(w.date)}</span>
+            </p>
+            <button
+              onClick={() => setRenameOpen(true)}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+            >
+              <Pencil className="h-3 w-3" /> Rename
+            </button>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             <StatBox icon={<Clock className="h-3.5 w-3.5" />} label="Duration" value={`${w.durationMin}m`} />
             <StatBox icon={<Flame className="h-3.5 w-3.5" />} label="Sets" value={`${w.exercises.reduce((n, e) => n + e.sets.filter((s) => s.done).length, 0)}`} />
@@ -130,6 +142,14 @@ export function WorkoutDetailSheet({
         busy={deleting}
         error={deleteError}
         onConfirm={doDelete}
+      />
+
+      <WorkoutTitleEditSheet
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        workoutId={w?.id ?? null}
+        currentTitle={w?.title ?? ""}
+        onSaved={() => { refetch(); onChanged?.() }}
       />
     </Sheet>
   )

@@ -1,6 +1,6 @@
 import * as React from "react"
 import {
-  Trophy, TrendingUp, TrendingDown, ChevronRight, Activity, Dumbbell, Clock, Flame,
+  Trophy, TrendingUp, TrendingDown, ChevronRight, Activity, Dumbbell, Clock,
   BarChart3, PieChart as PieChartIcon,
 } from "lucide-react"
 import {
@@ -17,6 +17,7 @@ import {
 } from "@/lib/api"
 import { ExerciseProgressPickerSheet } from "@/components/ExerciseProgressPickerSheet"
 import { WorkoutDetailSheet } from "@/components/WorkoutDetailSheet"
+import { WeekStatsGrid } from "@/components/WeekStatsGrid"
 import { relativeDay, fmtMinutes, formatTime } from "@/lib/utils"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -71,14 +72,14 @@ export function Stats({ initialTab }: { initialTab?: string } = {}) {
 
   return (
     <div className="flex flex-col gap-4 pb-2">
-      <ScreenHeader title="Stats" subtitle="Progress & PR's" />
+      <ScreenHeader title="Stats" subtitle={<>Progress & <span className="normal-case">PRs</span></>} />
 
       <div className="px-5">
         <Tabs defaultValue={initialTab ?? "overview"}>
           <TabsList className="w-full">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="progress">Progress</TabsTrigger>
-            <TabsTrigger value="prs">PR's</TabsTrigger>
+            <TabsTrigger value="prs">PRs</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -149,65 +150,30 @@ function OverviewTab({
       </div>
 
       {/* Stat tiles */}
-      <div className="grid grid-cols-2 gap-3">
-        {isWeek ? (
-          <>
-            <DeltaTile
-              icon={<Dumbbell className="h-3.5 w-3.5" />}
-              label="Workouts"
-              value={`${stats.thisWeek.workouts}`}
-              delta={stats.thisWeek.workouts - stats.lastWeek.workouts}
-            />
-            <DeltaTile
-              icon={<Flame className="h-3.5 w-3.5" />}
-              label="Streak"
-              value={`${stats.streak}`}
-              delta={0}
-              hideZeroDelta
-            />
-            <DeltaTile
-              icon={<Clock className="h-3.5 w-3.5" />}
-              label="Time"
-              value={fmtMinutes(stats.thisWeek.minutes)}
-              delta={stats.thisWeek.minutes - stats.lastWeek.minutes}
-              deltaSuffix="m"
-            />
-            <DeltaTile
-              icon={<Trophy className="h-3.5 w-3.5" />}
-              label="PR's"
-              value={`${stats.thisWeek.prCount}`}
-              delta={stats.thisWeek.prCount - stats.lastWeek.prCount}
-            />
-          </>
-        ) : (
-          <>
-            <SummaryTile
-              icon={<Dumbbell className="h-3.5 w-3.5" />}
-              label="Workouts"
-              value={`${data.summary.sessions}`}
-              sub={`${data.summary.avgSessionsPerWeek.toFixed(1)} / wk avg`}
-            />
-            <SummaryTile
-              icon={<Flame className="h-3.5 w-3.5" />}
-              label="Streak"
-              value={`${stats.streak}`}
-              sub={stats.streak === 1 ? "week" : "weeks"}
-            />
-            <SummaryTile
-              icon={<Clock className="h-3.5 w-3.5" />}
-              label="Avg workout"
-              value={fmtMinutes(data.summary.avgSessionMinutes)}
-              sub={`${fmtMinutes(data.summary.totalMinutes)} total`}
-            />
-            <SummaryTile
-              icon={<Trophy className="h-3.5 w-3.5" />}
-              label="PR's"
-              value={`${data.summary.prCount}`}
-              sub={`${(data.summary.prCount / weeksInPeriod * 4.33).toFixed(1)} / mo avg`}
-            />
-          </>
-        )}
-      </div>
+      {isWeek ? (
+        <WeekStatsGrid thisWeek={stats.thisWeek} lastWeek={stats.lastWeek} />
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          <SummaryTile
+            icon={<Dumbbell className="h-3.5 w-3.5" />}
+            label="Workouts"
+            value={`${data.summary.sessions}`}
+            sub={`${data.summary.avgSessionsPerWeek.toFixed(1)} / wk avg`}
+          />
+          <SummaryTile
+            icon={<Clock className="h-3.5 w-3.5" />}
+            label="Avg workout"
+            value={fmtMinutes(data.summary.avgSessionMinutes)}
+            sub={`${fmtMinutes(data.summary.totalMinutes)} total`}
+          />
+          <SummaryTile
+            icon={<Trophy className="h-3.5 w-3.5" />}
+            label={<span className="normal-case">PRs</span>}
+            value={`${data.summary.prCount}`}
+            sub={`${(data.summary.prCount / weeksInPeriod * 4.33).toFixed(1)} / mo avg`}
+          />
+        </div>
+      )}
 
       {loading && data.weekly.length === 0 ? (
         <Card className="p-6 text-center text-xs text-muted-foreground">Loading…</Card>
@@ -299,7 +265,7 @@ function OverviewTab({
             <Card className="p-0">
               <div className="flex items-end justify-between border-b border-border px-4 py-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {isWeek ? "PR's this week" : "PR's in this range"}
+                  <span className="normal-case">PRs</span> {isWeek ? "this week" : "in this range"}
                 </p>
                 <p className="num text-[11px] font-semibold text-muted-foreground">
                   {data.prs.length}
@@ -330,7 +296,7 @@ function OverviewTab({
                 ))}
                 {data.prs.length > 8 && (
                   <p className="px-4 py-2 text-center text-[11px] text-muted-foreground">
-                    +{data.prs.length - 8} more in PR's tab
+                    +{data.prs.length - 8} more in PRs tab
                   </p>
                 )}
               </div>
@@ -569,6 +535,7 @@ function ProgressTab({
         workoutId={openWorkoutId}
         onOpenChange={(o) => !o && setOpenWorkoutId(null)}
         onDeleted={() => refetchProgress()}
+        onChanged={() => refetchProgress()}
       />
     </div>
   )
@@ -589,7 +556,7 @@ function PRsTab({ personalRecords }: { personalRecords: ReturnType<typeof usePer
   if (personalRecords.length === 0) {
     return (
       <Card className="p-6 text-center text-sm text-muted-foreground">
-        No PR's yet — complete sets to start tracking.
+        No PRs yet — complete sets to start tracking.
       </Card>
     )
   }
@@ -661,39 +628,6 @@ function tooltipStyle(chart: ChartTheme) {
   }
 }
 
-function DeltaTile({
-  icon, label, value, delta, deltaSuffix = "", hideZeroDelta = false,
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string
-  delta: number
-  deltaSuffix?: string
-  hideZeroDelta?: boolean
-}) {
-  const show = !(hideZeroDelta && delta === 0)
-  const trend = delta > 0 ? "up" : delta < 0 ? "down" : "flat"
-  const color =
-    trend === "up" ? "text-emerald-600" :
-    trend === "down" ? "text-red-500" : "text-muted-foreground"
-  return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between">
-        <span className="tint-blue flex h-7 w-7 items-center justify-center rounded-lg">
-          {icon}
-        </span>
-        {show && (
-          <span className={cn("text-[10px] font-semibold", color)}>
-            {delta > 0 ? "+" : ""}{delta}{deltaSuffix}
-          </span>
-        )}
-      </div>
-      <p className="num mt-3 text-2xl font-bold leading-none">{value}</p>
-      <p className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
-    </Card>
-  )
-}
-
 function MetricChip({
   active, onClick, children,
 }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -734,19 +668,19 @@ function SummaryTile({
   icon, label, value, sub,
 }: {
   icon: React.ReactNode
-  label: string
+  label: React.ReactNode
   value: string
   sub?: string
 }) {
   return (
-    <Card className="p-4">
+    <Card className="p-3">
       <div className="flex items-center justify-between">
-        <span className="tint-blue flex h-7 w-7 items-center justify-center rounded-lg">
+        <span className="tint-blue flex h-6 w-6 items-center justify-center rounded-md">
           {icon}
         </span>
       </div>
-      <p className="num mt-3 text-2xl font-bold leading-none">{value}</p>
-      <p className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="num mt-2 text-xl font-bold leading-none">{value}</p>
+      <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
       {sub && (
         <p className="num mt-1 text-[10px] text-muted-foreground">{sub}</p>
       )}

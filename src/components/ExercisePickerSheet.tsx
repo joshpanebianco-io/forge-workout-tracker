@@ -143,7 +143,12 @@ export function ExercisePickerSheet({
   }
 
   const confirm = () => {
-    const picked = exercises.filter((e) => selected.has(e.id))
+    const byId = new Map(exercises.map((e) => [e.id, e]))
+    const picked: Exercise[] = []
+    for (const id of selected) {
+      const ex = byId.get(id)
+      if (ex) picked.push(ex)
+    }
     onPick(picked)
     onOpenChange(false)
   }

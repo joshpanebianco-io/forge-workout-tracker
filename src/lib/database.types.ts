@@ -149,6 +149,7 @@ export type Database = {
           description: string | null
           id: string
           name: string
+          position: number
           schedule: string | null
           user_id: string
         }
@@ -158,6 +159,7 @@ export type Database = {
           description?: string | null
           id?: string
           name: string
+          position: number
           schedule?: string | null
           user_id: string
         }
@@ -167,6 +169,7 @@ export type Database = {
           description?: string | null
           id?: string
           name?: string
+          position?: number
           schedule?: string | null
           user_id?: string
         }
