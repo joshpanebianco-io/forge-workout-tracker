@@ -151,15 +151,48 @@ export function useWorkoutSession() {
 }
 
 /**
- * Ticks every second so timer displays update across the app even when no
- * other state changes. Returns Date.now(). Components that don't need a
- * ticking timer shouldn't call this.
+ * Ticks every `intervalMs` so timer displays can update. Returns Date.now().
+ *
+ * Battery notes:
+ * - Pauses while the document is hidden (iOS PWA in background, screen off,
+ *   tab switched) and resumes — with an immediate catch-up tick — on return.
+ *   Without this gate iOS keeps firing the interval and draining battery
+ *   while the user isn't even looking at the app.
+ * - Call this from the smallest possible leaf component. Anything that
+ *   subscribes to the returned `now` re-renders every tick, so don't put
+ *   it on a screen-level component.
  */
 export function useTick(intervalMs = 1000) {
   const [now, setNow] = React.useState(() => Date.now())
   React.useEffect(() => {
-    const i = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(i)
+    let id: ReturnType<typeof setInterval> | null = null
+    const tick = () => setNow(Date.now())
+    const start = () => {
+      if (id != null) return
+      tick()
+      id = setInterval(tick, intervalMs)
+    }
+    const stop = () => {
+      if (id != null) {
+        clearInterval(id)
+        id = null
+      }
+    }
+    const hidden = typeof document !== "undefined" && document.visibilityState === "hidden"
+    if (!hidden) start()
+    const onVis = () => {
+      if (document.visibilityState === "hidden") stop()
+      else start()
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVis)
+    }
+    return () => {
+      stop()
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVis)
+      }
+    }
   }, [intervalMs])
   return now
 }

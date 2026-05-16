@@ -21,9 +21,7 @@ export function AppShell({
           className="phone-scroll relative flex-1 overflow-y-auto"
           style={{ paddingBottom: "calc(7rem + env(safe-area-inset-bottom))" }}
         >
-          <div key={active} className="animate-fade-in">
-            {children}
-          </div>
+          {children}
         </main>
         <BottomNav active={active} onChange={onChange} />
       </div>

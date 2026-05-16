@@ -14,7 +14,6 @@ export type SetEntry = {
   id: string
   weight: number
   reps: number
-  rpe?: number
   rest?: number
   done: boolean
   isPR?: boolean

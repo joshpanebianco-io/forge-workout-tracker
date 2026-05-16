@@ -21,7 +21,10 @@ export function BottomNav({
 }) {
   return (
     <nav className="fixed md:absolute inset-x-0 bottom-0 z-40">
-      <div className="glass border-t border-border/60 pb-[env(safe-area-inset-bottom)]">
+      {/* Solid bg instead of .glass — backdrop-filter recomputes on every
+          scroll frame on iOS and is the dominant compositor cost for the
+          always-visible nav. */}
+      <div className="bg-card/95 border-t border-border/60 pb-[env(safe-area-inset-bottom)]">
         <div className="grid grid-cols-5 gap-1 px-2 pt-2 pb-3">
           {items.map(({ id, label, icon: Icon }) => {
             const isActive = active === id

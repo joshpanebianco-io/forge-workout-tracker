@@ -12,7 +12,7 @@ export function WorkoutTitleEditSheet({
   onOpenChange: (o: boolean) => void
   workoutId: string | null
   currentTitle: string
-  onSaved: () => void
+  onSaved: (newTitle: string) => void
 }) {
   const [title, setTitle] = React.useState(currentTitle)
   const [saving, setSaving] = React.useState(false)
@@ -34,7 +34,7 @@ export function WorkoutTitleEditSheet({
     setError(null)
     try {
       await updateWorkoutTitle(workoutId, trimmed)
-      onSaved()
+      onSaved(trimmed)
       onOpenChange(false)
     } catch (e: any) {
       setError(e?.message ?? "Failed to rename")

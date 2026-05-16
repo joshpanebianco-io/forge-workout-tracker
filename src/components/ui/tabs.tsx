@@ -79,5 +79,5 @@ export function TabsContent({
 }) {
   const ctx = React.useContext(Ctx)!
   if (ctx.value !== value) return null
-  return <div className={cn("mt-4 animate-fade-in", className)}>{children}</div>
+  return <div className={cn("mt-4", className)}>{children}</div>
 }

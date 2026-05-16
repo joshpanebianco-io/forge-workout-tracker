@@ -222,19 +222,23 @@ export function History() {
         </div>
       )}
 
-      <WorkoutDetailSheet
-        workoutId={openId}
-        onOpenChange={(o) => !o && setOpenId(null)}
-        onDeleted={() => { refetchWeek(); refetchStats(); refetchHistory() }}
-        onChanged={() => { refetchWeek(); refetchStats() }}
-      />
+      {openId !== null && (
+        <WorkoutDetailSheet
+          workoutId={openId}
+          onOpenChange={(o) => !o && setOpenId(null)}
+          onDeleted={() => { refetchWeek(); refetchStats(); refetchHistory() }}
+          onChanged={() => { refetchWeek(); refetchStats() }}
+        />
+      )}
 
-      <DatePickerSheet
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        selectedWeekStart={weekStart}
-        onPick={handlePickDate}
-      />
+      {pickerOpen && (
+        <DatePickerSheet
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          selectedWeekStart={weekStart}
+          onPick={handlePickDate}
+        />
+      )}
     </div>
   )
 }

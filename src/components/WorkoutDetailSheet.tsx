@@ -92,28 +92,32 @@ export function WorkoutDetailSheet({
                     )}
                   </div>
 
-                  <div className="mt-2 grid grid-cols-[28px_1fr_1fr_44px_40px] gap-2 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mt-2 grid grid-cols-[28px_1fr_1fr_1fr] items-center gap-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     <span className="text-center">Set</span>
-                    <span>Weight</span>
-                    <span>Reps</span>
+                    <span className="text-center">Weight</span>
+                    <span className="text-center">Reps</span>
                     <span className="text-center">Rest</span>
-                    <span className="text-center">RIR</span>
                   </div>
                   <div className="mt-1 flex flex-col gap-0.5">
                     {log.sets.map((set, i) => (
                       <div
                         key={set.id}
-                        className={`grid grid-cols-[28px_1fr_1fr_44px_40px] items-center gap-2 rounded-md px-2.5 py-1 text-xs ${
+                        className={`grid grid-cols-[28px_1fr_1fr_1fr] items-center gap-2 rounded-md px-2 py-1.5 text-xs ${
                           set.done ? "bg-primary/10" : "opacity-60"
                         }`}
                       >
                         <span className="text-center font-semibold text-muted-foreground">{i + 1}</span>
-                        <span className="num font-semibold">{set.weight}<span className="text-[9px] font-normal text-muted-foreground"> kg</span></span>
-                        <span className="num font-semibold">{set.reps}<span className="text-[9px] font-normal text-muted-foreground"> reps</span></span>
+                        <span className="num flex items-baseline justify-center gap-0.5 font-semibold">
+                          {set.weight}
+                          <span className="text-[9px] font-normal text-muted-foreground">kg</span>
+                        </span>
+                        <span className="num flex items-baseline justify-center gap-0.5 font-semibold">
+                          {set.reps}
+                          <span className="text-[9px] font-normal text-muted-foreground">reps</span>
+                        </span>
                         <span className="num text-center text-muted-foreground">
                           {set.rest != null && set.rest > 0 ? fmtRest(set.rest) : "—"}
                         </span>
-                        <span className="text-center text-muted-foreground">{set.rpe ?? "—"}</span>
                       </div>
                     ))}
                   </div>
@@ -133,24 +137,28 @@ export function WorkoutDetailSheet({
         </div>
       )}
 
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={(o) => { if (!o) { setConfirmOpen(false); setDeleteError(null) } }}
-        title={w ? `Delete "${w.title}"?` : "Delete workout?"}
-        description="This permanently removes the workout, its exercises, and all logged sets. This can't be undone."
-        confirmLabel="Delete"
-        busy={deleting}
-        error={deleteError}
-        onConfirm={doDelete}
-      />
+      {confirmOpen && (
+        <ConfirmDialog
+          open={confirmOpen}
+          onOpenChange={(o) => { if (!o) { setConfirmOpen(false); setDeleteError(null) } }}
+          title={w ? `Delete "${w.title}"?` : "Delete workout?"}
+          description="This permanently removes the workout, its exercises, and all logged sets. This can't be undone."
+          confirmLabel="Delete"
+          busy={deleting}
+          error={deleteError}
+          onConfirm={doDelete}
+        />
+      )}
 
-      <WorkoutTitleEditSheet
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-        workoutId={w?.id ?? null}
-        currentTitle={w?.title ?? ""}
-        onSaved={() => { refetch(); onChanged?.() }}
-      />
+      {renameOpen && (
+        <WorkoutTitleEditSheet
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          workoutId={w?.id ?? null}
+          currentTitle={w?.title ?? ""}
+          onSaved={() => { refetch(); onChanged?.() }}
+        />
+      )}
     </Sheet>
   )
 }
