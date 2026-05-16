@@ -26,14 +26,14 @@ export function Sheet({
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div
         onClick={() => onOpenChange(false)}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-black/60 animate-fade-in"
       />
       <div
         className={cn(
           "relative w-full max-w-md max-h-[85%] overflow-y-auto rounded-t-3xl sm:rounded-3xl glass ring-inset-border animate-slide-up phone-scroll"
         )}
       >
-        <div className="sticky top-0 z-10 glass flex items-center justify-between px-5 py-4 ring-inset-border">
+        <div className="sticky top-0 z-10 flex items-center justify-between bg-card/95 px-5 py-4 ring-inset-border">
           <h2 className="text-base font-semibold">{title}</h2>
           <button
             onClick={() => onOpenChange(false)}

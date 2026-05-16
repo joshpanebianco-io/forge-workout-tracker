@@ -19,10 +19,15 @@ export function useSwUpdate() {
   return ctx
 }
 
+// Minimum gap between automatic SW update checks. Prevents glancing at the
+// app dozens of times during a workout from firing dozens of network requests.
+const AUTO_CHECK_MIN_INTERVAL_MS = 5 * 60 * 1000
+
 export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
   const [result, setResult] = React.useState<Result>(null)
   const [checking, setChecking] = React.useState(false)
   const regRef = React.useRef<ServiceWorkerRegistration | null>(null)
+  const lastAutoCheckRef = React.useRef(0)
 
   const {
     needRefresh: [needRefresh, setNeedRefresh],
@@ -38,6 +43,11 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
   }, [needRefresh])
 
   const runCheck = React.useCallback(async (manual: boolean) => {
+    if (!manual) {
+      const since = Date.now() - lastAutoCheckRef.current
+      if (since < AUTO_CHECK_MIN_INTERVAL_MS) return
+      lastAutoCheckRef.current = Date.now()
+    }
     if (manual) setChecking(true)
     try {
       const reg =

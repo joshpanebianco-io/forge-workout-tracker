@@ -14,16 +14,50 @@ import {
 } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { ExercisePickerSheet } from "@/components/ExercisePickerSheet"
-import { SetEditorSheet } from "@/components/SetEditorSheet"
+import { SetEditorSheet, type SetPatch } from "@/components/SetEditorSheet"
 import { WorkoutTitleEditSheet } from "@/components/WorkoutTitleEditSheet"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import type { ExerciseLog, SetEntry, Workout as WorkoutType } from "@/lib/types"
+import type { Exercise, ExerciseLog, SetEntry, Workout as WorkoutType } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useWorkoutSession, useTick, RestDefaults } from "@/lib/session"
 
+function DurationDisplay({ startedAt }: { startedAt: number }) {
+  const now = useTick(1000)
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000))
+  return <>{fmtElapsed(elapsed)}</>
+}
+
+function RestTimerCard({ endsAt, onClear }: { endsAt: number; onClear: () => void }) {
+  const now = useTick(1000)
+  const remaining = Math.max(0, Math.ceil((endsAt - now) / 1000))
+  return (
+    <div className="sticky top-0 z-30 bg-background px-5 py-2">
+      <Card className="tint-blue flex items-center gap-3 p-4 shadow-soft">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15">
+          <Timer className="h-5 w-5" />
+        </div>
+        <div className="flex-1">
+          <p className="text-xs font-semibold uppercase tracking-wider opacity-80">
+            {remaining === 0 ? "Rest complete" : "Resting"}
+          </p>
+          <p className="num text-xl font-bold">
+            {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}
+          </p>
+        </div>
+        <button
+          onClick={onClear}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-card/60 hover:bg-card"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </Card>
+    </div>
+  )
+}
+
 export function Workout() {
   const { user } = useAuth()
-  const { data: active, loading, refetch } = useActiveWorkout()
+  const { data: active, loading, refetch, setData: setActive } = useActiveWorkout()
   const { data: routines } = useRoutines()
   const [starting, setStarting] = React.useState<string | null>(null)
   const [creatingEmpty, setCreatingEmpty] = React.useState(false)
@@ -115,13 +149,27 @@ export function Workout() {
     )
   }
 
-  return <ActiveSession workout={active} onChange={refetch} />
+  return <ActiveSession workout={active} onFinished={() => setActive(null)} />
 }
 
-function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: () => void }) {
+function ActiveSession({
+  workout, onFinished,
+}: {
+  workout: WorkoutType
+  // Called after the workout transitions to a terminal state (finish or
+  // discard). Parent uses this to clear the active workout locally instead
+  // of refetching from the server.
+  onFinished: () => void
+}) {
+  // Local state is the source of truth for the active session. Mutations
+  // update this optimistically and the server only confirms. We never
+  // refetch the workout mid-session — the next mount (after a tab switch
+  // or reload) picks up the canonical server copy.
   const [logs, setLogs] = React.useState<ExerciseLog[]>(workout.exercises)
+  const [title, setTitle] = React.useState(workout.title)
   const [finishing, setFinishing] = React.useState(false)
   const [pickerOpen, setPickerOpen] = React.useState(false)
+  const [pickerAdding, setPickerAdding] = React.useState(false)
   const [editSet, setEditSet] = React.useState<{ set: SetEntry; exerciseName: string } | null>(null)
   const [showFinishMenu, setShowFinishMenu] = React.useState(false)
   const [confirmDiscard, setConfirmDiscard] = React.useState(false)
@@ -132,16 +180,22 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
   const [renameOpen, setRenameOpen] = React.useState(false)
 
   const session = useWorkoutSession()
-  const now = useTick(1000)
 
-  React.useEffect(() => setLogs(workout.exercises), [workout.id, workout.exercises])
+  // Re-sync local state only when the workout identity changes (start /
+  // resume). Deliberately doesn't depend on workout.exercises — that would
+  // let a parent re-render clobber our optimistic state mid-session.
+  React.useEffect(() => {
+    setLogs(workout.exercises)
+    setTitle(workout.title)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workout.id])
 
   const logIds = React.useMemo(() => logs.map((l) => l.id), [logs])
   React.useEffect(() => {
     session.syncWorkout(workout.id, logIds)
   }, [workout.id, logIds, session])
 
-  const elapsed = Math.max(0, Math.floor((now - new Date(workout.date).getTime()) / 1000))
+  const startedAtMs = React.useMemo(() => new Date(workout.date).getTime(), [workout.date])
 
   const completedSets = logs.reduce((acc, e) => acc + e.sets.filter((s) => s.done).length, 0)
   const totalSets = logs.reduce((acc, e) => acc + e.sets.length, 0)
@@ -150,16 +204,19 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
   )
   const progress = totalSets === 0 ? 0 : Math.round((completedSets / totalSets) * 100)
 
-  const restRemainingSec = session.restEndsAt != null
-    ? Math.max(0, Math.ceil((session.restEndsAt - now) / 1000))
-    : null
+  // Refs let callbacks remain referentially stable while still seeing the
+  // latest state. Stable callbacks are required so React.memo on SetRow can
+  // skip re-renders when an unrelated parent state change occurs.
+  const logsRef = React.useRef(logs)
+  React.useEffect(() => { logsRef.current = logs }, [logs])
+  const sessionRef = React.useRef(session)
+  React.useEffect(() => { sessionRef.current = session }, [session])
 
-  const toggle = async (exId: string, setId: string) => {
-    const current = logs.find((e) => e.id === exId)?.sets.find((s) => s.id === setId)
+  const handleToggle = React.useCallback(async (exId: string, setId: string, exerciseName: string) => {
+    const current = logsRef.current.find((e) => e.id === exId)?.sets.find((s) => s.id === setId)
     if (!current) return
     if (current.weight === 0 && current.reps === 0 && !current.done) {
-      const log = logs.find((e) => e.id === exId)
-      if (log) setEditSet({ set: current, exerciseName: log.exercise.name })
+      setEditSet({ set: current, exerciseName })
       return
     }
     const next = !current.done
@@ -168,7 +225,7 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
         ? { ...e, sets: e.sets.map((s) => s.id === setId ? { ...s, done: next } : s) }
         : e)
     )
-    if (next) session.startRest(current.rest ?? RestDefaults.seconds)
+    if (next) sessionRef.current.startRest(current.rest ?? RestDefaults.seconds)
     try { await toggleSetDone(setId, next) }
     catch {
       setLogs((prev) =>
@@ -177,25 +234,53 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
           : e)
       )
     }
-  }
+  }, [])
 
-  const handleDeleteSet = async (exId: string, setId: string) => {
-    const prev = logs
+  const handleEditSet = React.useCallback((exId: string, setId: string, exerciseName: string) => {
+    const set = logsRef.current.find((e) => e.id === exId)?.sets.find((s) => s.id === setId)
+    if (set) setEditSet({ set, exerciseName })
+  }, [])
+
+  const handleDeleteSet = React.useCallback(async (exId: string, setId: string) => {
+    const prev = logsRef.current
     setLogs((cur) =>
       cur.map((e) => e.id === exId ? { ...e, sets: e.sets.filter((s) => s.id !== setId) } : e)
     )
-    try { await deleteSet(setId); onChange() }
+    try { await deleteSet(setId) }
     catch { setLogs(prev) }
-  }
+  }, [])
+
+  // Sheet has already awaited the server; apply confirmed values locally.
+  const handleSetPatched = React.useCallback((setId: string, patch: SetPatch) => {
+    setLogs((cur) =>
+      cur.map((e) => ({
+        ...e,
+        sets: e.sets.map((s) => s.id === setId ? {
+          ...s,
+          weight: patch.weight,
+          reps: patch.reps,
+          rest: patch.rest ?? undefined,
+        } : s),
+      }))
+    )
+  }, [])
+
+  const handleSetDeletedFromSheet = React.useCallback((setId: string) => {
+    setLogs((cur) =>
+      cur.map((e) => ({ ...e, sets: e.sets.filter((s) => s.id !== setId) }))
+    )
+  }, [])
 
   const handleAddSet = async (exId: string) => {
-    const log = logs.find((e) => e.id === exId)
+    const log = logsRef.current.find((e) => e.id === exId)
     const last = log?.sets[log.sets.length - 1]
     try {
-      await addSet(exId, last
+      const created = await addSet(exId, last
         ? { weight: last.weight, reps: last.reps, rest: last.rest }
         : null)
-      onChange()
+      setLogs((cur) =>
+        cur.map((e) => e.id === exId ? { ...e, sets: [...e.sets, created] } : e)
+      )
     } catch (e) {
       console.error(e)
     }
@@ -204,9 +289,10 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
   const handleFinish = async () => {
     setFinishing(true)
     try {
-      const durationMin = Math.max(1, Math.round(elapsed / 60))
+      const elapsedSec = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
+      const durationMin = Math.max(1, Math.round(elapsedSec / 60))
       await finishWorkout(workout.id, durationMin)
-      onChange()
+      onFinished()
     } catch (e) {
       console.error(e)
     } finally {
@@ -225,7 +311,7 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
     try {
       await discardWorkout(workout.id)
       setConfirmDiscard(false)
-      onChange()
+      onFinished()
     } catch (e: any) {
       setDiscardError(e?.message ?? "Failed to discard workout")
     } finally {
@@ -239,16 +325,39 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
 
   const doRemoveExercise = async () => {
     if (!confirmRemoveEx) return
+    const idToRemove = confirmRemoveEx
+    const snapshot = logsRef.current
     setRemovingEx(true)
     setRemoveExError(null)
+    setLogs((cur) => cur.filter((e) => e.id !== idToRemove))
+    setConfirmRemoveEx(null)
     try {
-      await removeExerciseFromWorkout(confirmRemoveEx)
-      setConfirmRemoveEx(null)
-      onChange()
+      await removeExerciseFromWorkout(idToRemove)
     } catch (e: any) {
+      setLogs(snapshot)
+      setConfirmRemoveEx(idToRemove)
       setRemoveExError(e?.message ?? "Failed to remove exercise")
     } finally {
       setRemovingEx(false)
+    }
+  }
+
+  const handlePickExercises = async (picked: Exercise[]) => {
+    setPickerAdding(true)
+    try {
+      for (const ex of picked) {
+        try {
+          const { workoutExerciseId, initialSet } = await addExerciseToWorkout(workout.id, ex.id)
+          setLogs((cur) => [
+            ...cur,
+            { id: workoutExerciseId, exercise: ex, sets: [initialSet] },
+          ])
+        } catch (e) {
+          console.error(e)
+        }
+      }
+    } finally {
+      setPickerAdding(false)
     }
   }
 
@@ -256,7 +365,7 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
     <div className="flex flex-col gap-4 pb-4">
       <ScreenHeader
         subtitle="Active session"
-        title={workout.title}
+        title={title}
         right={
           <button
             onClick={() => setShowFinishMenu((v) => !v)}
@@ -287,7 +396,7 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
       <div className="px-5">
         <Card className="overflow-hidden p-0">
           <div className="grid grid-cols-3 divide-x divide-border/60">
-            <SummaryCell label="Duration" value={fmtElapsed(elapsed)} icon={<Timer className="h-3.5 w-3.5" />} />
+            <SummaryCell label="Duration" value={<DurationDisplay startedAt={startedAtMs} />} icon={<Timer className="h-3.5 w-3.5" />} />
             <SummaryCell label="Reps" value={`${totalReps}`} icon={<Flame className="h-3.5 w-3.5" />} />
             <SummaryCell label="Sets" value={`${completedSets}/${totalSets}`} icon={<Check className="h-3.5 w-3.5" />} />
           </div>
@@ -298,28 +407,8 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
       </div>
 
       {/* Rest timer */}
-      {restRemainingSec !== null && (
-        <div className="px-5">
-          <Card className="tint-blue flex items-center gap-3 p-4 shadow-none">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15">
-              <Timer className="h-5 w-5" />
-            </div>
-            <div className="flex-1">
-              <p className="text-xs font-semibold uppercase tracking-wider opacity-80">
-                {restRemainingSec === 0 ? "Rest complete" : "Resting"}
-              </p>
-              <p className="num text-xl font-bold">
-                {Math.floor(restRemainingSec / 60)}:{String(restRemainingSec % 60).padStart(2, "0")}
-              </p>
-            </div>
-            <button
-              onClick={() => session.clearRest()}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-card/60 hover:bg-card"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </Card>
-        </div>
+      {session.restEndsAt != null && (
+        <RestTimerCard endsAt={session.restEndsAt} onClear={session.clearRest} />
       )}
 
       {/* Exercises */}
@@ -359,12 +448,11 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
 
               {!isCollapsed && (
                 <div className="px-4 pb-4">
-                  <div className="grid grid-cols-[28px_1fr_1fr_44px_36px_24px_28px] items-center gap-2 px-2.5 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="grid grid-cols-[28px_1fr_1fr_1fr_32px_32px] items-center gap-2 px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     <span className="text-center">Set</span>
-                    <span>Weight</span>
-                    <span>Reps</span>
+                    <span className="text-center">Weight</span>
+                    <span className="text-center">Reps</span>
                     <span className="text-center">Rest</span>
-                    <span className="text-center">RIR</span>
                     <span />
                     <span />
                   </div>
@@ -374,9 +462,11 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
                         key={set.id}
                         index={i + 1}
                         set={set}
-                        onToggle={() => toggle(log.id, set.id)}
-                        onEdit={() => setEditSet({ set, exerciseName: log.exercise.name })}
-                        onDelete={() => handleDeleteSet(log.id, set.id)}
+                        exId={log.id}
+                        exerciseName={log.exercise.name}
+                        onToggle={handleToggle}
+                        onEdit={handleEditSet}
+                        onDelete={handleDeleteSet}
                       />
                     ))}
                   </div>
@@ -407,55 +497,63 @@ function ActiveSession({ workout, onChange }: { workout: WorkoutType; onChange: 
         </Button>
       </div>
 
-      <ExercisePickerSheet
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        multi
-        excludeIds={logs.map((l) => l.exercise.id)}
-        onPick={async (picked) => {
-          for (const ex of picked) {
-            await addExerciseToWorkout(workout.id, ex.id)
-          }
-          onChange()
-        }}
-      />
+      {/* Conditional render keeps data hooks (esp. useExercises in the
+          picker) from firing while these sheets are closed. */}
+      {pickerOpen && (
+        <ExercisePickerSheet
+          open={pickerOpen}
+          onOpenChange={(o) => { if (!pickerAdding) setPickerOpen(o) }}
+          multi
+          excludeIds={logs.map((l) => l.exercise.id)}
+          onPick={handlePickExercises}
+        />
+      )}
 
-      <SetEditorSheet
-        set={editSet?.set ?? null}
-        exerciseName={editSet?.exerciseName ?? ""}
-        onOpenChange={(o) => !o && setEditSet(null)}
-        onSaved={onChange}
-      />
+      {editSet && (
+        <SetEditorSheet
+          set={editSet.set}
+          exerciseName={editSet.exerciseName}
+          onOpenChange={(o) => !o && setEditSet(null)}
+          onPatched={handleSetPatched}
+          onDeleted={handleSetDeletedFromSheet}
+        />
+      )}
 
-      <ConfirmDialog
-        open={confirmDiscard}
-        onOpenChange={(o) => { setConfirmDiscard(o); if (!o) setDiscardError(null) }}
-        title="Discard this workout?"
-        description="All sets in this session will be lost. This can't be undone."
-        confirmLabel="Discard"
-        busy={finishing}
-        error={discardError}
-        onConfirm={doDiscard}
-      />
+      {confirmDiscard && (
+        <ConfirmDialog
+          open={confirmDiscard}
+          onOpenChange={(o) => { setConfirmDiscard(o); if (!o) setDiscardError(null) }}
+          title="Discard this workout?"
+          description="All sets in this session will be lost. This can't be undone."
+          confirmLabel="Discard"
+          busy={finishing}
+          error={discardError}
+          onConfirm={doDiscard}
+        />
+      )}
 
-      <ConfirmDialog
-        open={confirmRemoveEx !== null}
-        onOpenChange={(o) => { if (!o) { setConfirmRemoveEx(null); setRemoveExError(null) } }}
-        title="Remove this exercise?"
-        description="The exercise and its sets will be removed from this workout."
-        confirmLabel="Remove"
-        busy={removingEx}
-        error={removeExError}
-        onConfirm={doRemoveExercise}
-      />
+      {confirmRemoveEx !== null && (
+        <ConfirmDialog
+          open={confirmRemoveEx !== null}
+          onOpenChange={(o) => { if (!o) { setConfirmRemoveEx(null); setRemoveExError(null) } }}
+          title="Remove this exercise?"
+          description="The exercise and its sets will be removed from this workout."
+          confirmLabel="Remove"
+          busy={removingEx}
+          error={removeExError}
+          onConfirm={doRemoveExercise}
+        />
+      )}
 
-      <WorkoutTitleEditSheet
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-        workoutId={workout.id}
-        currentTitle={workout.title}
-        onSaved={onChange}
-      />
+      {renameOpen && (
+        <WorkoutTitleEditSheet
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          workoutId={workout.id}
+          currentTitle={title}
+          onSaved={setTitle}
+        />
+      )}
     </div>
   )
 }
@@ -466,55 +564,57 @@ function fmtElapsed(seconds: number) {
   return `${m}:${String(s).padStart(2, "0")}`
 }
 
-function SetRow({
-  index, set, onToggle, onEdit, onDelete,
-}: {
+type SetRowProps = {
   index: number
   set: SetEntry
-  onToggle: () => void
-  onEdit: () => void
-  onDelete: () => void
-}) {
+  exId: string
+  exerciseName: string
+  onToggle: (exId: string, setId: string, exerciseName: string) => void
+  onEdit: (exId: string, setId: string, exerciseName: string) => void
+  onDelete: (exId: string, setId: string) => void
+}
+
+const SetRow = React.memo(function SetRow({
+  index, set, exId, exerciseName, onToggle, onEdit, onDelete,
+}: SetRowProps) {
+  const handleEdit = () => onEdit(exId, set.id, exerciseName)
   return (
     <div
       className={cn(
-        "grid grid-cols-[28px_1fr_1fr_44px_36px_24px_28px] items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors",
+        "grid grid-cols-[28px_1fr_1fr_1fr_32px_32px] items-center gap-2 rounded-lg px-2 py-2 transition-colors",
         set.done && "bg-primary/10"
       )}
     >
       <span className={cn("text-center text-xs font-semibold", set.done ? "text-primary" : "text-muted-foreground")}>{index}</span>
       <button
-        onClick={onEdit}
-        className="num flex items-baseline gap-0.5 rounded-md px-1 py-0.5 text-left text-sm font-semibold hover:bg-secondary/60"
+        onClick={handleEdit}
+        className="num flex items-baseline justify-center gap-0.5 rounded-md px-1 py-0.5 text-sm font-semibold hover:bg-secondary/60"
       >
         {set.weight}
         <span className="text-[10px] font-normal text-muted-foreground">kg</span>
       </button>
       <button
-        onClick={onEdit}
-        className="num flex items-baseline gap-0.5 rounded-md px-1 py-0.5 text-left text-sm font-semibold hover:bg-secondary/60"
+        onClick={handleEdit}
+        className="num flex items-baseline justify-center gap-0.5 rounded-md px-1 py-0.5 text-sm font-semibold hover:bg-secondary/60"
       >
         {set.reps}
         <span className="text-[10px] font-normal text-muted-foreground">reps</span>
       </button>
       <button
-        onClick={onEdit}
+        onClick={handleEdit}
         className="num rounded-md py-0.5 text-center text-xs text-muted-foreground hover:bg-secondary/60"
       >
         {set.rest != null && set.rest > 0 ? fmtRest(set.rest) : "—"}
       </button>
-      <button onClick={onEdit} className="rounded-md py-0.5 text-center text-xs text-muted-foreground hover:bg-secondary/60">
-        {set.rpe ?? "—"}
-      </button>
       <button
-        onClick={onDelete}
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        onClick={() => onDelete(exId, set.id)}
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
         aria-label="Delete set"
       >
         <Trash2 className="h-3.5 w-3.5" />
       </button>
       <button
-        onClick={onToggle}
+        onClick={() => onToggle(exId, set.id, exerciseName)}
         className={cn(
           "flex h-8 w-8 items-center justify-center rounded-lg transition-all",
           set.done
@@ -526,7 +626,7 @@ function SetRow({
       </button>
     </div>
   )
-}
+})
 
 function fmtRest(seconds: number) {
   if (seconds < 60) return `${seconds}s`
@@ -537,7 +637,7 @@ function fmtRest(seconds: number) {
 
 function SummaryCell({
   label, value, icon,
-}: { label: string; value: string; icon: React.ReactNode }) {
+}: { label: string; value: React.ReactNode; icon: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-1 px-3 py-3">
       <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

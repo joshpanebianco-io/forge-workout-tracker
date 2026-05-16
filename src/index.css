@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -109,7 +109,11 @@
   }
 
   .phone-scroll::-webkit-scrollbar { display: none; }
-  .phone-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+  .phone-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .recharts-wrapper :focus,
@@ -123,14 +127,18 @@
 }
 
 @layer utilities {
+  /* Sheets/dialogs only — they're transient. Bottom nav uses solid bg
+     instead because it's always visible (backdrop-filter recomputes on
+     every paint frame and burns iOS GPU). 12px blur looks nearly identical
+     to 20px through a tinted overlay but is meaningfully cheaper. */
   .glass {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.96) 100%);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.97) 100%);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
   }
 
   .dark .glass {
-    background: linear-gradient(180deg, rgba(17, 24, 39, 0.88) 0%, rgba(17, 24, 39, 0.94) 100%);
+    background: linear-gradient(180deg, rgba(17, 24, 39, 0.9) 0%, rgba(17, 24, 39, 0.95) 100%);
   }
 
   .gradient-primary {

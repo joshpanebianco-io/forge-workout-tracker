@@ -7,19 +7,25 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { updateSet, deleteSet } from "@/lib/api"
 import type { SetEntry } from "@/lib/types"
 
+export type SetPatch = {
+  weight: number
+  reps: number
+  rest: number | null
+}
+
 export function SetEditorSheet({
-  set, exerciseName, onOpenChange, onSaved,
+  set, exerciseName, onOpenChange, onPatched, onDeleted,
 }: {
   set: SetEntry | null
   exerciseName: string
   onOpenChange: (o: boolean) => void
-  onSaved: () => void
+  onPatched: (setId: string, patch: SetPatch) => void
+  onDeleted: (setId: string) => void
 }) {
   const open = set !== null
   const [weight, setWeight] = React.useState("")
   const [reps, setReps] = React.useState("")
   const [rest, setRest] = React.useState("")
-  const [rpe, setRpe] = React.useState("")
   const [saving, setSaving] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [confirmDelete, setConfirmDelete] = React.useState(false)
@@ -31,7 +37,6 @@ export function SetEditorSheet({
     setWeight(set.weight ? String(set.weight) : "")
     setReps(set.reps ? String(set.reps) : "")
     setRest(set.rest ? String(set.rest) : "")
-    setRpe(set.rpe ? String(set.rpe) : "")
     setError(null)
   }, [set])
 
@@ -39,14 +44,14 @@ export function SetEditorSheet({
     if (!set) return
     setSaving(true)
     setError(null)
+    const patch: SetPatch = {
+      weight: Number(weight) || 0,
+      reps: Number(reps) || 0,
+      rest: rest ? Math.max(0, Math.round(Number(rest))) : null,
+    }
     try {
-      await updateSet(set.id, {
-        weight: Number(weight) || 0,
-        reps: Number(reps) || 0,
-        rest: rest ? Math.max(0, Math.round(Number(rest))) : null,
-        rpe: rpe ? Number(rpe) : null,
-      })
-      onSaved()
+      await updateSet(set.id, patch)
+      onPatched(set.id, patch)
       onOpenChange(false)
     } catch (e: any) {
       setError(e?.message ?? "Failed to save")
@@ -59,10 +64,11 @@ export function SetEditorSheet({
     if (!set) return
     setDeleting(true)
     setDeleteError(null)
+    const id = set.id
     try {
-      await deleteSet(set.id)
+      await deleteSet(id)
       setConfirmDelete(false)
-      onSaved()
+      onDeleted(id)
       onOpenChange(false)
     } catch (e: any) {
       setDeleteError(e?.message ?? "Failed to delete")
@@ -107,13 +113,6 @@ export function SetEditorSheet({
           onMinus={() => adjust(setRest, -15)}
           onPlus={() => adjust(setRest, 15)}
           integer
-        />
-        <FieldStepper
-          label="RIR (optional)"
-          value={rpe}
-          onChange={setRpe}
-          onMinus={() => adjust(setRpe, -0.5)}
-          onPlus={() => adjust(setRpe, 0.5)}
         />
 
         {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}

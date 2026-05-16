@@ -95,7 +95,7 @@ export function DatePickerSheet({
 
         <div className="relative grid grid-cols-7 gap-1">
           {loading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-card/60 backdrop-blur-sm">
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-card/80">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           )}

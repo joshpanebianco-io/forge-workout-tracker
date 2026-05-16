@@ -62,6 +62,11 @@ function useOverrideEpoch() {
 
 // ---------------------------------------------------------------------
 // generic data hook
+//
+// `loading` is true only until the FIRST fetch settles. Subsequent fetches
+// (refetch, dep changes) run in the background and keep the prior data
+// visible — no spinner flicker. The exposed `setData` lets callers do
+// optimistic updates without round-tripping the server.
 // ---------------------------------------------------------------------
 function useAsync<T>(
   fetcher: () => Promise<T>,
@@ -72,20 +77,26 @@ function useAsync<T>(
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [version, setVersion] = React.useState(0)
+  const settledRef = React.useRef(false)
 
   React.useEffect(() => {
     let cancelled = false
-    setLoading(true)
     fetcher()
       .then((d) => { if (!cancelled) { setData(d); setError(null) } })
       .catch((e) => { if (!cancelled) setError(e?.message ?? String(e)) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+      .finally(() => {
+        if (cancelled) return
+        if (!settledRef.current) {
+          settledRef.current = true
+          setLoading(false)
+        }
+      })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, version])
 
   const refetch = React.useCallback(() => setVersion((v) => v + 1), [])
-  return { data, loading, error, refetch }
+  return { data, loading, error, refetch, setData }
 }
 
 // ---------------------------------------------------------------------
@@ -149,7 +160,7 @@ const WORKOUT_SELECT = `
   workout_exercises (
     id, position, notes, exercise_id,
     exercises ( id, name, muscle, equipment ),
-    sets ( id, set_number, weight_kg, reps, rpe, rest_seconds, done )
+    sets ( id, set_number, weight_kg, reps, rest_seconds, done )
   )
 `
 
@@ -167,7 +178,6 @@ function rowToWorkout(w: any, overrides?: Map<string, string>): Workout {
             id: s.id,
             weight: Number(s.weight_kg),
             reps: s.reps,
-            rpe: s.rpe ?? undefined,
             rest: s.rest_seconds ?? undefined,
             done: s.done,
           })
@@ -968,7 +978,7 @@ export async function toggleSetDone(setId: string, done: boolean) {
 export async function addSet(
   workoutExerciseId: string,
   prev: { weight: number; reps: number; rest?: number } | null,
-) {
+): Promise<SetEntry> {
   const { data: existing, error: countErr } = await supabase
     .from("sets")
     .select("set_number")
@@ -977,15 +987,26 @@ export async function addSet(
     .limit(1)
   if (countErr) throw countErr
   const next = (existing?.[0]?.set_number ?? 0) + 1
-  const { error } = await supabase.from("sets").insert({
-    workout_exercise_id: workoutExerciseId,
-    set_number: next,
-    weight_kg: prev?.weight ?? 0,
-    reps: prev?.reps ?? 8,
-    rest_seconds: prev?.rest ?? null,
-    done: false,
-  })
+  const { data: row, error } = await supabase
+    .from("sets")
+    .insert({
+      workout_exercise_id: workoutExerciseId,
+      set_number: next,
+      weight_kg: prev?.weight ?? 0,
+      reps: prev?.reps ?? 8,
+      rest_seconds: prev?.rest ?? null,
+      done: false,
+    })
+    .select("id, weight_kg, reps, rest_seconds, done")
+    .single()
   if (error) throw error
+  return {
+    id: row.id,
+    weight: Number(row.weight_kg),
+    reps: row.reps,
+    rest: row.rest_seconds ?? undefined,
+    done: row.done,
+  }
 }
 
 export async function finishWorkout(workoutId: string, durationMin: number) {
@@ -1109,19 +1130,16 @@ export async function updateSet(
   patch: {
     weight?: number
     reps?: number
-    rpe?: number | null
     rest?: number | null
   }
 ) {
   const payload: {
     weight_kg?: number
     reps?: number
-    rpe?: number | null
     rest_seconds?: number | null
   } = {}
   if (patch.weight !== undefined) payload.weight_kg = patch.weight
   if (patch.reps !== undefined) payload.reps = patch.reps
-  if (patch.rpe !== undefined) payload.rpe = patch.rpe
   if (patch.rest !== undefined) payload.rest_seconds = patch.rest
   const { error } = await supabase.from("sets").update(payload).eq("id", setId)
   if (error) throw error
@@ -1138,7 +1156,7 @@ export async function deleteSet(setId: string) {
 export async function addExerciseToWorkout(
   workoutId: string,
   exerciseId: string,
-) {
+): Promise<{ workoutExerciseId: string; initialSet: SetEntry }> {
   const { data: existing, error: pErr } = await supabase
     .from("workout_exercises")
     .select("position")
@@ -1155,15 +1173,29 @@ export async function addExerciseToWorkout(
   if (error) throw error
   const lastByExercise = await fetchLastSessionSetsByExercise([exerciseId], workoutId)
   const prefill = pickPrefillFor(1, lastByExercise.get(exerciseId))
-  const { error: sErr } = await supabase.from("sets").insert({
-    workout_exercise_id: we.id,
-    set_number: 1,
-    weight_kg: prefill.weight,
-    reps: prefill.reps,
-    rest_seconds: prefill.rest,
-    done: false,
-  })
+  const { data: setRow, error: sErr } = await supabase
+    .from("sets")
+    .insert({
+      workout_exercise_id: we.id,
+      set_number: 1,
+      weight_kg: prefill.weight,
+      reps: prefill.reps,
+      rest_seconds: prefill.rest,
+      done: false,
+    })
+    .select("id, weight_kg, reps, rest_seconds, done")
+    .single()
   if (sErr) throw sErr
+  return {
+    workoutExerciseId: we.id,
+    initialSet: {
+      id: setRow.id,
+      weight: Number(setRow.weight_kg),
+      reps: setRow.reps,
+      rest: setRow.rest_seconds ?? undefined,
+      done: setRow.done,
+    },
+  }
 }
 
 export async function removeExerciseFromWorkout(workoutExerciseId: string) {

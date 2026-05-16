@@ -50,7 +50,7 @@ export function ConfirmDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
       <div
         onClick={() => !busy && onOpenChange(false)}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-black/60 animate-fade-in"
       />
       <div
         role="alertdialog"

@@ -61,14 +61,16 @@ export function Stats({ initialTab }: { initialTab?: string } = {}) {
   const { resolved } = useTheme()
   const isDark = resolved === "dark"
 
-  const chart = {
+  // Stable reference: only rebuilds when the theme actually flips.
+  // Avoids breaking memoization in chart subtrees that take chart as a prop.
+  const chart = React.useMemo<ChartTheme>(() => ({
     grid: isDark ? "#1f2937" : "#e5e7eb",
     tick: isDark ? "#94a3b8" : "#64748b",
     tooltipBg: isDark ? "#0f172a" : "#ffffff",
     tooltipBorder: isDark ? "#1f2937" : "#e2e8f0",
     tooltipShadow: isDark ? "0 4px 12px rgba(0,0,0,0.4)" : "0 4px 12px rgba(15,23,42,0.08)",
     tooltipText: isDark ? "#e2e8f0" : "#0f172a",
-  }
+  }), [isDark])
 
   return (
     <div className="flex flex-col gap-4 pb-2">
@@ -467,6 +469,7 @@ function ProgressTab({
                       strokeWidth={3}
                       dot={{ fill: "#3b82f6", r: 3 }}
                       activeDot={{ r: 5 }}
+                      isAnimationActive={false}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -524,19 +527,23 @@ function ProgressTab({
         </Card>
       )}
 
-      <ExerciseProgressPickerSheet
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        selectedId={selectedId}
-        onPick={(e) => setSelectedId(e.id)}
-      />
+      {pickerOpen && (
+        <ExerciseProgressPickerSheet
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          selectedId={selectedId}
+          onPick={(e) => setSelectedId(e.id)}
+        />
+      )}
 
-      <WorkoutDetailSheet
-        workoutId={openWorkoutId}
-        onOpenChange={(o) => !o && setOpenWorkoutId(null)}
-        onDeleted={() => refetchProgress()}
-        onChanged={() => refetchProgress()}
-      />
+      {openWorkoutId !== null && (
+        <WorkoutDetailSheet
+          workoutId={openWorkoutId}
+          onOpenChange={(o) => !o && setOpenWorkoutId(null)}
+          onDeleted={() => refetchProgress()}
+          onChanged={() => refetchProgress()}
+        />
+      )}
     </div>
   )
 }

@@ -152,25 +152,31 @@ export function Profile() {
         </p>
       </div>
 
-      <ProfileEditSheet
-        open={editing}
-        onOpenChange={setEditing}
-        profile={profile}
-        onSaved={refetchProfile}
-      />
+      {editing && (
+        <ProfileEditSheet
+          open={editing}
+          onOpenChange={setEditing}
+          profile={profile}
+          onSaved={refetchProfile}
+        />
+      )}
 
-      <AppearanceSheet open={appearanceOpen} onOpenChange={setAppearanceOpen} />
+      {appearanceOpen && (
+        <AppearanceSheet open={appearanceOpen} onOpenChange={setAppearanceOpen} />
+      )}
 
-      <ConfirmDialog
-        open={confirmClear}
-        onOpenChange={(o) => { if (!o) { setConfirmClear(false); setClearError(null) } }}
-        title="Clear all your data?"
-        description="This permanently deletes your workouts, routines, custom exercises, and any renamed exercise names. Your profile (name, bodyweight, goal) is kept. This can't be undone."
-        confirmLabel="Clear everything"
-        busy={clearing}
-        error={clearError}
-        onConfirm={doClearData}
-      />
+      {confirmClear && (
+        <ConfirmDialog
+          open={confirmClear}
+          onOpenChange={(o) => { if (!o) { setConfirmClear(false); setClearError(null) } }}
+          title="Clear all your data?"
+          description="This permanently deletes your workouts, routines, custom exercises, and any renamed exercise names. Your profile (name, bodyweight, goal) is kept. This can't be undone."
+          confirmLabel="Clear everything"
+          busy={clearing}
+          error={clearError}
+          onConfirm={doClearData}
+        />
+      )}
 
     </div>
   )

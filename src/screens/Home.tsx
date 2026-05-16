@@ -9,11 +9,31 @@ import { Avatar } from "@/components/ui/avatar"
 import {
   useStats, useProfile, useRoutines, useActiveWorkout, usePersonalRecords,
 } from "@/lib/api"
-import { RoutineSheet } from "@/components/RoutineSheet"
-import { RoutineListSheet } from "@/components/RoutineListSheet"
+import { useTick } from "@/lib/session"
 import { WeekStatsGrid } from "@/components/WeekStatsGrid"
 import type { Tab } from "@/components/BottomNav"
 import type { Routine } from "@/lib/types"
+
+// Routine sheets pull in @dnd-kit/* (~50KB gzip). Lazy + conditional-render
+// so the dnd code only loads when a user actually opens a routine, and the
+// sheet's own data hooks don't fire on every Home mount.
+const RoutineSheet = React.lazy(() =>
+  import("@/components/RoutineSheet").then((m) => ({ default: m.RoutineSheet }))
+)
+const RoutineListSheet = React.lazy(() =>
+  import("@/components/RoutineListSheet").then((m) => ({ default: m.RoutineListSheet }))
+)
+
+// Leaf component: only this small text re-renders every second so the rest
+// of the Home tree doesn't pay the tick cost. useTick already pauses when
+// the document is hidden.
+function LiveDuration({ startedAt }: { startedAt: number }) {
+  const now = useTick(1000)
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000))
+  const m = Math.floor(elapsed / 60)
+  const s = elapsed % 60
+  return <>{m}:{String(s).padStart(2, "0")}</>
+}
 
 export function Home({
   onNavigate,
@@ -71,7 +91,7 @@ export function Home({
                 {stats.streak === 0 ? "Start your first workout." : "Keep it up."}
               </p>
             </div>
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/30 backdrop-blur">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/20 ring-1 ring-white/30">
               <Flame className="h-8 w-8 text-white" strokeWidth={1.5} />
             </div>
           </div>
@@ -106,7 +126,9 @@ export function Home({
                   </Button>
                 </div>
                 <div className="mt-4 flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">{completedSets} of {totalSets} sets</span>
+                  <span className="text-muted-foreground">
+                    {completedSets} of {totalSets} sets · <span className="num"><LiveDuration startedAt={new Date(todayWorkout.date).getTime()} /></span>
+                  </span>
                   <span className="num font-semibold text-foreground">{progress}%</span>
                 </div>
                 <Progress value={progress} className="mt-2" />
@@ -222,21 +244,29 @@ export function Home({
         )}
       </div>
 
-      <RoutineSheet
-        open={routineSheet.open}
-        onOpenChange={(o) => setRoutineSheet((s) => ({ ...s, open: o }))}
-        routine={routineSheet.routine}
-        onSaved={refetchRoutines}
-      />
+      {routineSheet.open && (
+        <React.Suspense fallback={null}>
+          <RoutineSheet
+            open={routineSheet.open}
+            onOpenChange={(o) => setRoutineSheet((s) => ({ ...s, open: o }))}
+            routine={routineSheet.routine}
+            onSaved={refetchRoutines}
+          />
+        </React.Suspense>
+      )}
 
-      <RoutineListSheet
-        open={routineListOpen}
-        onOpenChange={setRoutineListOpen}
-        routines={routines}
-        onSelect={(r) => setRoutineSheet({ open: true, routine: r })}
-        onCreate={() => setRoutineSheet({ open: true, routine: null })}
-        onChanged={refetchRoutines}
-      />
+      {routineListOpen && (
+        <React.Suspense fallback={null}>
+          <RoutineListSheet
+            open={routineListOpen}
+            onOpenChange={setRoutineListOpen}
+            routines={routines}
+            onSelect={(r) => setRoutineSheet({ open: true, routine: r })}
+            onCreate={() => setRoutineSheet({ open: true, routine: null })}
+            onChanged={refetchRoutines}
+          />
+        </React.Suspense>
+      )}
     </div>
   )
 }

@@ -7,8 +7,9 @@ import * as React from "react"
 export function DeviceFrame({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-[100dvh] w-full text-foreground" style={{ background: "hsl(var(--app-bg))" }}>
-      {/* Ambient backdrop */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+      {/* Ambient backdrop — desktop-only decoration. On mobile it sits behind
+          the opaque app surface and only costs GPU (large blur filters). */}
+      <div className="pointer-events-none fixed inset-0 hidden overflow-hidden md:block">
         <div className="absolute -left-32 -top-32 h-[520px] w-[520px] rounded-full bg-blue-400/20 blur-[120px]" />
         <div className="absolute -right-32 top-1/3 h-[420px] w-[420px] rounded-full bg-indigo-400/20 blur-[120px]" />
         <div className="absolute bottom-0 left-1/3 h-[420px] w-[420px] rounded-full bg-sky-300/15 blur-[120px]" />
