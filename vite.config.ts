@@ -1,13 +1,32 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import path from 'path'
+
+const pkg = JSON.parse(readFileSync('./package.json', 'utf-8')) as { version: string }
+
+const PATCH_BASELINE_COMMITS = 9
+
+let commitCount = 0
+try {
+  commitCount = parseInt(execSync('git rev-list --count HEAD').toString().trim(), 10) || 0
+} catch {
+  commitCount = 0
+}
+const patch = Math.max(0, commitCount - PATCH_BASELINE_COMMITS)
+const [major, minor] = pkg.version.split('.').map((n) => parseInt(n, 10) || 0)
+const APP_VERSION = `${major}.${minor}.${patch}`
 
 export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   plugins: [
     react(),
