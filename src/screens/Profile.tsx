@@ -139,7 +139,7 @@ export function Profile() {
       {/* Settings list */}
       <div className="px-5 pb-4">
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Preferences
+          Settings
         </h2>
         <Card className="divide-y divide-border/60 p-0">
           <Row icon={<Bell />} label="Notifications" hint="Coming soon" disabled />
@@ -150,6 +150,8 @@ export function Profile() {
             onClick={() => setAppearanceOpen(true)}
           />
           <Row icon={<Calendar />} label="Week starts on" hint="Monday" disabled />
+          <Row icon={<Download />} label="Export data" hint="Coming soon" disabled />
+          <Row icon={<Share2 />} label="Share profile" hint="Coming soon" disabled />
           <Row
             icon={<RefreshCw />}
             label="Check for updates"
@@ -157,8 +159,6 @@ export function Profile() {
             onClick={checkForUpdates}
             disabled={checkingUpdate}
           />
-          <Row icon={<Download />} label="Export data" hint="Coming soon" disabled />
-          <Row icon={<Share2 />} label="Share profile" hint="Coming soon" disabled />
         </Card>
 
         <Card className="mt-5 p-0">
