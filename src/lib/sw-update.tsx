@@ -68,14 +68,29 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     if (!("serviceWorker" in navigator)) return
-    runCheck(false)
+    let cancelled = false
+
+    const initial = async () => {
+      try {
+        await navigator.serviceWorker.ready
+      } catch {
+        return
+      }
+      if (cancelled) return
+      await runCheck(false)
+      setTimeout(() => { if (!cancelled) runCheck(false) }, 3000)
+    }
+    initial()
+
     const onVis = () => {
       if (document.visibilityState === "visible") runCheck(false)
     }
     document.addEventListener("visibilitychange", onVis)
-    window.addEventListener("focus", () => runCheck(false))
+    window.addEventListener("focus", onVis)
     return () => {
+      cancelled = true
       document.removeEventListener("visibilitychange", onVis)
+      window.removeEventListener("focus", onVis)
     }
   }, [runCheck])
 
