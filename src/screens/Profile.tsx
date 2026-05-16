@@ -14,6 +14,7 @@ import { APP_VERSION } from "@/lib/version"
 import { ProfileEditSheet } from "@/components/ProfileEditSheet"
 import { AppearanceSheet } from "@/components/AppearanceSheet"
 import { useTheme } from "@/lib/theme"
+import { useSwUpdate } from "@/lib/sw-update"
 
 export function Profile() {
   const { signOut, user } = useAuth()
@@ -25,35 +26,7 @@ export function Profile() {
   const [confirmClear, setConfirmClear] = React.useState(false)
   const [clearing, setClearing] = React.useState(false)
   const [clearError, setClearError] = React.useState<string | null>(null)
-  const [checkingUpdate, setCheckingUpdate] = React.useState(false)
-  const [updateResult, setUpdateResult] = React.useState<"available" | "up-to-date" | null>(null)
-
-  const checkForUpdates = async () => {
-    setCheckingUpdate(true)
-    try {
-      if (!("serviceWorker" in navigator)) {
-        setUpdateResult("up-to-date")
-        return
-      }
-      const reg = await navigator.serviceWorker.getRegistration()
-      if (!reg) {
-        setUpdateResult("up-to-date")
-        return
-      }
-      let found = !!reg.waiting
-      const onUpdate = () => { found = true }
-      reg.addEventListener("updatefound", onUpdate)
-      try {
-        await reg.update()
-        await new Promise((r) => setTimeout(r, 1200))
-      } finally {
-        reg.removeEventListener("updatefound", onUpdate)
-      }
-      setUpdateResult(found ? "available" : "up-to-date")
-    } finally {
-      setCheckingUpdate(false)
-    }
-  }
+  const { checking: checkingUpdate, triggerCheck: checkForUpdates } = useSwUpdate()
   const { mode } = useTheme()
   const appearanceIcon = mode === "dark" ? <Moon /> : mode === "light" ? <Sun /> : <Monitor />
   const appearanceLabel = mode === "dark" ? "Dark" : mode === "light" ? "Light" : "System"
@@ -199,27 +172,6 @@ export function Profile() {
         onConfirm={doClearData}
       />
 
-      <ConfirmDialog
-        open={updateResult === "available"}
-        onOpenChange={(o) => { if (!o) setUpdateResult(null) }}
-        title="Update available"
-        description="A new version of Forge is ready. Reload to install it."
-        confirmLabel="Reload now"
-        cancelLabel="Later"
-        tone="default"
-        onConfirm={() => { setUpdateResult(null); window.location.reload() }}
-      />
-
-      <ConfirmDialog
-        open={updateResult === "up-to-date"}
-        onOpenChange={(o) => { if (!o) setUpdateResult(null) }}
-        title="You're up to date"
-        description="Forge is already running the latest version."
-        confirmLabel="OK"
-        tone="info"
-        hideCancel
-        onConfirm={() => setUpdateResult(null)}
-      />
     </div>
   )
 }

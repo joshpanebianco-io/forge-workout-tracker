@@ -9,6 +9,7 @@ import { Stats } from "@/screens/Stats"
 import { Profile } from "@/screens/Profile"
 import { Login } from "@/screens/Login"
 import { useAuth } from "@/lib/auth"
+import { SwUpdateProvider } from "@/lib/sw-update"
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home")
@@ -28,15 +29,19 @@ export default function App() {
     )
   }
 
-  if (!session) return <Login />
-
   return (
-    <AppShell active={tab} onChange={(t) => navigate(t)}>
-      {tab === "home" && <Home onNavigate={navigate} />}
-      {tab === "workout" && <Workout />}
-      {tab === "history" && <History />}
-      {tab === "stats" && <Stats key={statsInitTab ?? "_"} initialTab={statsInitTab ?? "overview"} />}
-      {tab === "profile" && <Profile />}
-    </AppShell>
+    <SwUpdateProvider>
+      {!session ? (
+        <Login />
+      ) : (
+        <AppShell active={tab} onChange={(t) => navigate(t)}>
+          {tab === "home" && <Home onNavigate={navigate} />}
+          {tab === "workout" && <Workout />}
+          {tab === "history" && <History />}
+          {tab === "stats" && <Stats key={statsInitTab ?? "_"} initialTab={statsInitTab ?? "overview"} />}
+          {tab === "profile" && <Profile />}
+        </AppShell>
+      )}
+    </SwUpdateProvider>
   )
 }
