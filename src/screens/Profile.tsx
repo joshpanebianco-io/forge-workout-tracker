@@ -138,7 +138,7 @@ export function Profile() {
         </Button>
 
         <p className="mt-6 text-center text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
-          Forge · v0.1.0
+          Forge · v{__APP_VERSION__}
         </p>
       </div>
 
