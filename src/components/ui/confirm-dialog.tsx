@@ -1,9 +1,9 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, Check } from "lucide-react"
 import { Button } from "./button"
 
-export type ConfirmTone = "destructive" | "default"
+export type ConfirmTone = "destructive" | "default" | "info"
 
 export function ConfirmDialog({
   open,
@@ -15,6 +15,7 @@ export function ConfirmDialog({
   tone = "destructive",
   busy = false,
   error,
+  hideCancel = false,
   onConfirm,
 }: {
   open: boolean
@@ -26,6 +27,7 @@ export function ConfirmDialog({
   tone?: ConfirmTone
   busy?: boolean
   error?: string | null
+  hideCancel?: boolean
   onConfirm: () => void | Promise<void>
 }) {
   React.useEffect(() => {
@@ -40,6 +42,7 @@ export function ConfirmDialog({
   if (!open) return null
 
   const isDestructive = tone === "destructive"
+  const isInfo = tone === "info"
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
@@ -58,6 +61,11 @@ export function ConfirmDialog({
               <AlertTriangle className="h-6 w-6" />
             </div>
           )}
+          {isInfo && (
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Check className="h-6 w-6" />
+            </div>
+          )}
           <h2 className="text-base font-semibold tracking-tight">{title}</h2>
           {description && (
             <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
@@ -68,14 +76,16 @@ export function ConfirmDialog({
             </p>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-2 px-5 pb-5">
-          <Button
-            variant="secondary"
-            disabled={busy}
-            onClick={() => onOpenChange(false)}
-          >
-            {cancelLabel}
-          </Button>
+        <div className={`grid ${hideCancel ? "grid-cols-1" : "grid-cols-2"} gap-2 px-5 pb-5`}>
+          {!hideCancel && (
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => onOpenChange(false)}
+            >
+              {cancelLabel}
+            </Button>
+          )}
           <Button
             variant={isDestructive ? "destructive" : "default"}
             disabled={busy}

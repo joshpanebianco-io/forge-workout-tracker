@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import { useAuth } from "@/lib/auth"
+import { APP_VERSION } from "@/lib/version"
 
 type Mode = "signin" | "signup"
 
@@ -142,7 +143,7 @@ export function Login() {
         </Card>
 
         <p className="mt-6 text-center text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
-          Forge · v{__APP_VERSION__}
+          Forge · v{APP_VERSION}
         </p>
       </div>
     </div>
