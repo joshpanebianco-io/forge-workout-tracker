@@ -1,6 +1,6 @@
 import * as React from "react"
 import {
-  Settings, Bell, Sun, Moon, Monitor, Download, Share2, LogOut, ChevronRight, Weight, Target, Calendar, Loader2,
+  Settings, Bell, Sun, Moon, Monitor, Download, Share2, LogOut, ChevronRight, Weight, Target, Calendar, Loader2, RefreshCw,
 } from "lucide-react"
 import { ScreenHeader } from "@/components/ScreenHeader"
 import { Card } from "@/components/ui/card"
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useAuth } from "@/lib/auth"
 import { useProfile, useStats, usePersonalRecords, clearMyData } from "@/lib/api"
+import { APP_VERSION } from "@/lib/version"
 import { ProfileEditSheet } from "@/components/ProfileEditSheet"
 import { AppearanceSheet } from "@/components/AppearanceSheet"
 import { useTheme } from "@/lib/theme"
@@ -24,6 +25,35 @@ export function Profile() {
   const [confirmClear, setConfirmClear] = React.useState(false)
   const [clearing, setClearing] = React.useState(false)
   const [clearError, setClearError] = React.useState<string | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = React.useState(false)
+  const [updateResult, setUpdateResult] = React.useState<"available" | "up-to-date" | null>(null)
+
+  const checkForUpdates = async () => {
+    setCheckingUpdate(true)
+    try {
+      if (!("serviceWorker" in navigator)) {
+        setUpdateResult("up-to-date")
+        return
+      }
+      const reg = await navigator.serviceWorker.getRegistration()
+      if (!reg) {
+        setUpdateResult("up-to-date")
+        return
+      }
+      let found = !!reg.waiting
+      const onUpdate = () => { found = true }
+      reg.addEventListener("updatefound", onUpdate)
+      try {
+        await reg.update()
+        await new Promise((r) => setTimeout(r, 1200))
+      } finally {
+        reg.removeEventListener("updatefound", onUpdate)
+      }
+      setUpdateResult(found ? "available" : "up-to-date")
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
   const { mode } = useTheme()
   const appearanceIcon = mode === "dark" ? <Moon /> : mode === "light" ? <Sun /> : <Monitor />
   const appearanceLabel = mode === "dark" ? "Dark" : mode === "light" ? "Light" : "System"
@@ -120,6 +150,13 @@ export function Profile() {
             onClick={() => setAppearanceOpen(true)}
           />
           <Row icon={<Calendar />} label="Week starts on" hint="Monday" disabled />
+          <Row
+            icon={<RefreshCw />}
+            label="Check for updates"
+            hint={checkingUpdate ? "Checking…" : undefined}
+            onClick={checkForUpdates}
+            disabled={checkingUpdate}
+          />
           <Row icon={<Download />} label="Export data" hint="Coming soon" disabled />
           <Row icon={<Share2 />} label="Share profile" hint="Coming soon" disabled />
         </Card>
@@ -138,7 +175,7 @@ export function Profile() {
         </Button>
 
         <p className="mt-6 text-center text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
-          Forge · v{__APP_VERSION__}
+          Forge · v{APP_VERSION}
         </p>
       </div>
 
@@ -160,6 +197,28 @@ export function Profile() {
         busy={clearing}
         error={clearError}
         onConfirm={doClearData}
+      />
+
+      <ConfirmDialog
+        open={updateResult === "available"}
+        onOpenChange={(o) => { if (!o) setUpdateResult(null) }}
+        title="Update available"
+        description="A new version of Forge is ready. Reload to install it."
+        confirmLabel="Reload now"
+        cancelLabel="Later"
+        tone="default"
+        onConfirm={() => { setUpdateResult(null); window.location.reload() }}
+      />
+
+      <ConfirmDialog
+        open={updateResult === "up-to-date"}
+        onOpenChange={(o) => { if (!o) setUpdateResult(null) }}
+        title="You're up to date"
+        description="Forge is already running the latest version."
+        confirmLabel="OK"
+        tone="info"
+        hideCancel
+        onConfirm={() => setUpdateResult(null)}
       />
     </div>
   )

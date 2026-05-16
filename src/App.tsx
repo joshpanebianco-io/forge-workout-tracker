@@ -8,7 +8,6 @@ import { History } from "@/screens/History"
 import { Stats } from "@/screens/Stats"
 import { Profile } from "@/screens/Profile"
 import { Login } from "@/screens/Login"
-import { UpdatePrompt } from "@/components/UpdatePrompt"
 import { useAuth } from "@/lib/auth"
 
 export default function App() {
@@ -29,25 +28,15 @@ export default function App() {
     )
   }
 
-  if (!session) {
-    return (
-      <>
-        <Login />
-        <UpdatePrompt />
-      </>
-    )
-  }
+  if (!session) return <Login />
 
   return (
-    <>
-      <AppShell active={tab} onChange={(t) => navigate(t)}>
-        {tab === "home" && <Home onNavigate={navigate} />}
-        {tab === "workout" && <Workout />}
-        {tab === "history" && <History />}
-        {tab === "stats" && <Stats key={statsInitTab ?? "_"} initialTab={statsInitTab ?? "overview"} />}
-        {tab === "profile" && <Profile />}
-      </AppShell>
-      <UpdatePrompt />
-    </>
+    <AppShell active={tab} onChange={(t) => navigate(t)}>
+      {tab === "home" && <Home onNavigate={navigate} />}
+      {tab === "workout" && <Workout />}
+      {tab === "history" && <History />}
+      {tab === "stats" && <Stats key={statsInitTab ?? "_"} initialTab={statsInitTab ?? "overview"} />}
+      {tab === "profile" && <Profile />}
+    </AppShell>
   )
 }
