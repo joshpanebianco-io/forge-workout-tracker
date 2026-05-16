@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Sparkles } from "lucide-react"
 import { useRegisterSW } from "virtual:pwa-register/react"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
@@ -117,6 +118,7 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
         confirmLabel="Reload now"
         cancelLabel="Later"
         tone="default"
+        icon={<Sparkles className="h-6 w-6" />}
         onConfirm={apply}
       />
       <ConfirmDialog

@@ -16,6 +16,7 @@ export function ConfirmDialog({
   busy = false,
   error,
   hideCancel = false,
+  icon,
   onConfirm,
 }: {
   open: boolean
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   busy?: boolean
   error?: string | null
   hideCancel?: boolean
+  icon?: React.ReactNode
   onConfirm: () => void | Promise<void>
 }) {
   React.useEffect(() => {
@@ -56,16 +58,19 @@ export function ConfirmDialog({
         className="relative w-full max-w-sm rounded-3xl glass ring-inset-border shadow-soft animate-fade-in overflow-hidden"
       >
         <div className="px-6 pt-6 pb-5 flex flex-col items-center text-center gap-3">
-          {isDestructive && (
+          {icon ? (
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+              {icon}
+            </div>
+          ) : isDestructive ? (
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
               <AlertTriangle className="h-6 w-6" />
             </div>
-          )}
-          {isInfo && (
+          ) : isInfo ? (
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Check className="h-6 w-6" />
             </div>
-          )}
+          ) : null}
           <h2 className="text-base font-semibold tracking-tight">{title}</h2>
           {description && (
             <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
