@@ -180,6 +180,11 @@ function ActiveSession({
   const [renameOpen, setRenameOpen] = React.useState(false)
 
   const session = useWorkoutSession()
+  // syncWorkout / startRest are referentially stable (useCallback w/ []) but
+  // the surrounding `session` value object changes on every provider state
+  // tick. Pull the stable fn refs out so effects + memoized callbacks can
+  // depend on them directly and don't re-run on every collapse/rest update.
+  const { syncWorkout, startRest } = session
 
   // Re-sync local state only when the workout identity changes (start /
   // resume). Deliberately doesn't depend on workout.exercises — that would
@@ -190,10 +195,10 @@ function ActiveSession({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workout.id])
 
-  const logIds = React.useMemo(() => logs.map((l) => l.id), [logs])
+  const logIdsKey = React.useMemo(() => logs.map((l) => l.id).join("|"), [logs])
   React.useEffect(() => {
-    session.syncWorkout(workout.id, logIds)
-  }, [workout.id, logIds, session])
+    syncWorkout(workout.id, logIdsKey ? logIdsKey.split("|") : [])
+  }, [workout.id, logIdsKey, syncWorkout])
 
   const startedAtMs = React.useMemo(() => new Date(workout.date).getTime(), [workout.date])
 
@@ -209,8 +214,6 @@ function ActiveSession({
   // skip re-renders when an unrelated parent state change occurs.
   const logsRef = React.useRef(logs)
   React.useEffect(() => { logsRef.current = logs }, [logs])
-  const sessionRef = React.useRef(session)
-  React.useEffect(() => { sessionRef.current = session }, [session])
 
   const handleToggle = React.useCallback(async (exId: string, setId: string, exerciseName: string) => {
     const current = logsRef.current.find((e) => e.id === exId)?.sets.find((s) => s.id === setId)
@@ -225,7 +228,7 @@ function ActiveSession({
         ? { ...e, sets: e.sets.map((s) => s.id === setId ? { ...s, done: next } : s) }
         : e)
     )
-    if (next) sessionRef.current.startRest(current.rest ?? RestDefaults.seconds)
+    if (next) startRest(current.rest ?? RestDefaults.seconds)
     try { await toggleSetDone(setId, next) }
     catch {
       setLogs((prev) =>
@@ -234,7 +237,7 @@ function ActiveSession({
           : e)
       )
     }
-  }, [])
+  }, [startRest])
 
   const handleEditSet = React.useCallback((exId: string, setId: string, exerciseName: string) => {
     const set = logsRef.current.find((e) => e.id === exId)?.sets.find((s) => s.id === setId)

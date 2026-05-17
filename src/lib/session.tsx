@@ -57,7 +57,22 @@ const SessionContext = React.createContext<SessionContextValue | null>(null)
 export function WorkoutSessionProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = React.useState<Persisted>(() => load())
 
-  React.useEffect(() => { save(state) }, [state])
+  // Debounce the localStorage write. JSON.stringify + setItem on every state
+  // change (toggle, collapse, rest tick boundary) is synchronous I/O on the
+  // main thread and adds up over a long session.
+  React.useEffect(() => {
+    const t = setTimeout(() => save(state), 250)
+    return () => clearTimeout(t)
+  }, [state])
+
+  // Flush on hide so we don't lose the latest state if the app is suspended
+  // before the debounce fires.
+  React.useEffect(() => {
+    if (typeof document === "undefined") return
+    const flush = () => { if (document.visibilityState === "hidden") save(state) }
+    document.addEventListener("visibilitychange", flush)
+    return () => document.removeEventListener("visibilitychange", flush)
+  }, [state])
 
   // Vibrate + auto-dismiss when rest timer crosses zero. Only fires once per
   // rest period (restNotified gate). Survives nav because state is restored
@@ -89,11 +104,18 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
     (workoutId: string | null, knownExerciseIds: string[]) => {
       setState((s) => {
         if (workoutId !== s.workoutId) return { ...empty, workoutId }
+        // Only allocate a new state if the prune actually removes something.
+        // Returning a new {...s} object on every call combined with `session`
+        // landing in a child's effect deps spirals into a render loop.
         const valid = new Set(knownExerciseIds)
+        const existingKeys = Object.keys(s.collapsed)
+        let changed = false
         const collapsed: Record<string, boolean> = {}
-        for (const [id, v] of Object.entries(s.collapsed)) {
-          if (valid.has(id)) collapsed[id] = v
+        for (const id of existingKeys) {
+          if (valid.has(id)) collapsed[id] = s.collapsed[id]
+          else changed = true
         }
+        if (!changed) return s
         return { ...s, collapsed }
       })
     },
