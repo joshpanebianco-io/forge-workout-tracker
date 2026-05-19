@@ -56,19 +56,28 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
         if (manual) setResult("up-to-date")
         return
       }
-      let found = !!reg.waiting
-      const onUpdate = () => { found = true }
-      reg.addEventListener("updatefound", onUpdate)
-      try {
-        await reg.update()
-        await new Promise((r) => setTimeout(r, manual ? 1200 : 800))
-      } finally {
-        reg.removeEventListener("updatefound", onUpdate)
+      // Kick off a fetch for the worker script. If there's a new version
+      // available the browser starts installing it.
+      await reg.update()
+      // Poll for reg.waiting to populate. We intentionally don't listen for
+      // the `updatefound` event because that fires when install BEGINS —
+      // not when the new worker is ready to take over. Acting on
+      // updatefound surfaces the "update available" dialog too early, and
+      // clicking "Reload now" then has no waiting worker to skip-waiting
+      // against, so the reload silently no-ops until the install actually
+      // finishes (at which point vite-plugin-pwa fires needRefresh and we
+      // get a second, working dialog). Polling reg.waiting avoids that.
+      const deadline = Date.now() + (manual ? 4000 : 2500)
+      while (Date.now() < deadline) {
+        if (reg.waiting) break
+        await new Promise((r) => setTimeout(r, 200))
       }
-      if (manual) {
-        setResult(found ? "available" : "up-to-date")
-      } else if (found) {
-        setResult("available")
+      // If a waiting worker exists, the needRefresh effect will (or already
+      // has) opened the dialog; nothing to do for the "available" case here.
+      // For manual checks where nothing's waiting after the poll window,
+      // confirm the up-to-date state explicitly.
+      if (manual && !reg.waiting) {
+        setResult("up-to-date")
       }
     } catch {
       if (manual) setResult("up-to-date")

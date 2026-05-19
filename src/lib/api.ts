@@ -82,6 +82,36 @@ function useOverrideEpoch() {
 // ---------------------------------------------------------------------
 const memCache = new Map<string, unknown>()
 
+// Live subscribers per cache key. When patchCache (or the fetcher's success
+// path) writes a new value into memCache, we fan it out to every mounted
+// useAsync that's reading the same key, so their React state stays in sync
+// with the cache. Without this, optimistic offline mutations would update
+// memCache/IDB but the components on screen would keep rendering the prior
+// snapshot until the next remount or deps change.
+const cacheChangeListeners = new Map<string, Set<() => void>>()
+
+function subscribeCacheChange(key: string, cb: () => void): () => void {
+  let set = cacheChangeListeners.get(key)
+  if (!set) {
+    set = new Set()
+    cacheChangeListeners.set(key, set)
+  }
+  set.add(cb)
+  return () => {
+    const s = cacheChangeListeners.get(key)
+    if (!s) return
+    s.delete(cb)
+    if (s.size === 0) cacheChangeListeners.delete(key)
+  }
+}
+
+function notifyCacheChange(key: string) {
+  const set = cacheChangeListeners.get(key)
+  if (!set) return
+  // Copy so a listener that unsubscribes itself doesn't perturb iteration.
+  for (const cb of Array.from(set)) cb()
+}
+
 export function clearMemoryCache() {
   memCache.clear()
 }
@@ -99,6 +129,7 @@ async function patchCache<T>(
   const prev = inMem !== undefined ? inMem : await readCache<T>(userId, key)
   const next = updater(prev)
   memCache.set(key, next)
+  notifyCacheChange(key)
   await writeCache(userId, key, next)
   return next
 }
@@ -196,6 +227,11 @@ function useAsync<T>(
         if (cacheEnabled) {
           memCache.set(cacheKey!, d)
           writeCache(userId, cacheKey!, d).catch(() => { /* ignore */ })
+          // Fan out the fresh value to any other hooks reading the same key
+          // (e.g., the home screen and the workout screen both subscribing
+          // to "active"). The notifying hook is in the listener set too,
+          // but setData with the same reference React-bails-out cheaply.
+          notifyCacheChange(cacheKey!)
         }
       })
       .catch((e) => {
@@ -218,6 +254,25 @@ function useAsync<T>(
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, version, reconnectEpoch])
+
+  // Subscribe to direct memCache writes so optimistic mutations (patchCache)
+  // immediately flow into the data state without waiting for a refetch.
+  // Runs independently of the fetcher effect so we don't re-subscribe on
+  // every deps change unrelated to the cache key.
+  React.useEffect(() => {
+    if (!cacheEnabled) return
+    return subscribeCacheChange(cacheKey!, () => {
+      const v = memCache.get(cacheKey!) as T | undefined
+      if (v === undefined) return
+      setData(v)
+      // First-mount fast path: a sync mutation that fires before the network
+      // settles should still flip loading off.
+      if (!settledRef.current) {
+        settledRef.current = true
+        setLoading(false)
+      }
+    })
+  }, [cacheEnabled, cacheKey])
 
   const refetch = React.useCallback(() => setVersion((v) => v + 1), [])
   return { data, loading, error, refetch, setData }
