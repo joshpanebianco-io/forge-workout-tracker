@@ -4,7 +4,7 @@ import { useAuth } from "./auth"
 import {
   addDays, startOfWeek, startOfMonth, startOfDay, localDayKey, localMonthKey,
 } from "./utils"
-import { readCache, writeCache } from "./cache"
+import { readCache, writeCache, dropUserCache } from "./cache"
 import { runMutation } from "./mutation-queue"
 import { onNetworkChange } from "./network"
 import type {
@@ -84,6 +84,23 @@ const memCache = new Map<string, unknown>()
 
 export function clearMemoryCache() {
   memCache.clear()
+}
+
+// Apply an in-place update to a cached value (both memory + IDB tiers). Used
+// by offline-capable mutations to keep the persisted cache consistent with
+// the server intent — so that on reload, useActiveWorkout / useRoutines etc.
+// see the optimistic state instead of the pre-mutation snapshot.
+async function patchCache<T>(
+  userId: string | null,
+  key: string,
+  updater: (prev: T | undefined) => T,
+): Promise<T> {
+  const inMem = memCache.get(key) as T | undefined
+  const prev = inMem !== undefined ? inMem : await readCache<T>(userId, key)
+  const next = updater(prev)
+  memCache.set(key, next)
+  await writeCache(userId, key, next)
+  return next
 }
 
 // Global revalidation pulse: every useAsync call listens. Bumping it forces
@@ -1095,7 +1112,49 @@ export function useTrends(period: TrendsPeriod) {
 // generate their own UUIDs so optimistic UI state and the eventual server
 // row share a single, stable id.
 // ---------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// Helpers that mutate the "active" workout cache. The cache key is shared
+// across users on the device but cleared on sign-out / user switch, so we
+// don't bother passing the user id at the call site — callers retrieve it
+// from auth context as needed and pass it through patchCache.
+// --------------------------------------------------------------------------
+function patchActiveWorkout(
+  userId: string | null,
+  patch: (w: Workout) => Workout | null,
+) {
+  return patchCache<Workout | null>(userId, "active", (prev) => {
+    if (!prev) return prev ?? null
+    return patch(prev)
+  })
+}
+
+function patchSetInActive(
+  userId: string | null,
+  setId: string,
+  patch: (s: SetEntry) => SetEntry,
+) {
+  return patchActiveWorkout(userId, (w) => ({
+    ...w,
+    exercises: w.exercises.map((e) => ({
+      ...e,
+      sets: e.sets.map((s) => (s.id === setId ? patch(s) : s)),
+    })),
+  }))
+}
+
+// Best-effort: many mutation entry points don't have direct access to the
+// current user id without going through useAuth (which is a React hook). For
+// helpers called from non-hook code, we extract the user from the session
+// the supabase client already holds, so the cache patch lands under the
+// correct namespace even when the call site doesn't pass it explicitly.
+async function activeUserId(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession()
+  return data.session?.user.id ?? null
+}
+
 export async function toggleSetDone(setId: string, done: boolean) {
+  const userId = await activeUserId()
+  await patchSetInActive(userId, setId, (s) => ({ ...s, done }))
   await runMutation("toggleSetDone", { setId, done })
 }
 
@@ -1108,24 +1167,30 @@ export async function addSet(
   const weight = prev?.weight ?? 0
   const reps = prev?.reps ?? 8
   const rest = prev?.rest ?? null
-  await runMutation("addSet", {
-    id,
-    workoutExerciseId,
-    setNumber,
-    weight,
-    reps,
-    rest,
-  })
-  return {
-    id,
-    weight,
-    reps,
-    rest: rest ?? undefined,
-    done: false,
+  const userId = await activeUserId()
+  const newSet: SetEntry = {
+    id, weight, reps, rest: rest ?? undefined, done: false,
   }
+  await patchActiveWorkout(userId, (w) => ({
+    ...w,
+    exercises: w.exercises.map((e) =>
+      e.id === workoutExerciseId ? { ...e, sets: [...e.sets, newSet] } : e,
+    ),
+  }))
+  await runMutation("addSet", {
+    id, workoutExerciseId, setNumber, weight, reps, rest,
+  })
+  return newSet
 }
 
 export async function finishWorkout(workoutId: string, durationMin: number) {
+  const userId = await activeUserId()
+  // Clear the active-workout cache so the home screen no longer renders the
+  // session that's now wrapping up. The "recent" list will naturally pick
+  // up the finished workout on its next revalidation.
+  await patchCache<Workout | null>(userId, "active", (prev) =>
+    prev?.id === workoutId ? null : prev ?? null,
+  )
   await runMutation("finishWorkout", {
     workoutId,
     durationMin,
@@ -1134,87 +1199,131 @@ export async function finishWorkout(workoutId: string, durationMin: number) {
 }
 
 export async function startEmptyWorkout(userId: string, title = "Quick session") {
-  const { data, error } = await supabase
-    .from("workouts")
-    .insert({ user_id: userId, title, started_at: new Date().toISOString() })
-    .select("id")
-    .single()
-  if (error) {
-    if (isActiveWorkoutConflict(error)) {
-      throw new Error("You already have an active workout. Finish or discard it first.")
-    }
-    throw error
+  // Guard against creating a second active workout while one is already
+  // in flight (online or queued). Reading from cache is cheap and matches
+  // the server's UNIQUE(user_id) WHERE ended_at IS NULL constraint.
+  const existingActive = (memCache.get("active") as Workout | null | undefined)
+    ?? await readCache<Workout | null>(userId, "active")
+  if (existingActive) {
+    throw new Error("You already have an active workout. Finish or discard it first.")
   }
-  return data.id
-}
 
-function isActiveWorkoutConflict(e: unknown): boolean {
-  const err = e as { code?: string; message?: string } | null
-  if (!err) return false
-  return err.code === "23505" && /workouts_one_active_per_user/.test(err.message ?? "")
+  const id = crypto.randomUUID()
+  const startedAt = new Date().toISOString()
+  const synthetic: Workout = {
+    id,
+    title,
+    date: startedAt,
+    durationMin: 0,
+    exercises: [],
+  }
+  await patchCache<Workout | null>(userId, "active", () => synthetic)
+  await runMutation("startEmptyWorkout", { id, userId, title, startedAt })
+  return id
 }
 
 export async function startWorkoutFromRoutine(routineId: string, userId: string) {
-  const { data: routine, error: rErr } = await supabase
-    .from("routines")
-    .select(`
-      id, name,
-      routine_exercises ( exercise_id, position, target_sets )
-    `)
-    .eq("id", routineId)
-    .single()
-  if (rErr) throw rErr
-
-  const { data: workout, error: wErr } = await supabase
-    .from("workouts")
-    .insert({
-      user_id: userId,
-      routine_id: routineId,
-      title: routine.name,
-      started_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single()
-  if (wErr) {
-    if (isActiveWorkoutConflict(wErr)) {
-      throw new Error("You already have an active workout. Finish or discard it first.")
-    }
-    throw wErr
+  const existingActive = (memCache.get("active") as Workout | null | undefined)
+    ?? await readCache<Workout | null>(userId, "active")
+  if (existingActive) {
+    throw new Error("You already have an active workout. Finish or discard it first.")
   }
 
-  const sortedRe = (routine.routine_exercises ?? []).sort((a: any, b: any) => a.position - b.position)
-  const lastByExercise = await fetchLastSessionSetsByExercise(
-    sortedRe.map((re: any) => re.exercise_id),
-    workout.id,
-  )
-  for (const re of sortedRe) {
-    const { data: we, error: weErr } = await supabase
-      .from("workout_exercises")
-      .insert({
-        workout_id: workout.id,
-        exercise_id: re.exercise_id,
-        position: re.position,
-      })
-      .select("id")
-      .single()
-    if (weErr) throw weErr
-    const lastSets = lastByExercise.get(re.exercise_id)
-    const rows = Array.from({ length: re.target_sets }, (_, i) => {
-      const setNumber = i + 1
-      const prefill = pickPrefillFor(setNumber, lastSets)
+  // Read routine + exercise metadata from the cache. We need exercise objects
+  // (name, muscle, equipment) to render the synthetic active workout the
+  // user sees while offline — these come from the "exercises" cache rather
+  // than another network round-trip.
+  const routines = (memCache.get("routines") as Routine[] | undefined)
+    ?? await readCache<Routine[]>(userId, "routines")
+    ?? []
+  const routine = routines.find((r) => r.id === routineId)
+  if (!routine) {
+    throw new Error("Routine not found locally. Open the app while online to sync first.")
+  }
+  const exercises = (memCache.get("exercises") as Exercise[] | undefined)
+    ?? await readCache<Exercise[]>(userId, "exercises")
+    ?? []
+  const exerciseById = new Map(exercises.map((e) => [e.id, e]))
+
+  // Best-effort prefill from last session, baked into the payload so replay
+  // is deterministic. Falls back to zeros when offline / not yet cached.
+  const workoutId = crypto.randomUUID()
+  const startedAt = new Date().toISOString()
+  let lastByExercise: Map<string, LastSessionSet[]> = new Map()
+  try {
+    lastByExercise = await fetchLastSessionSetsByExercise(
+      routine.exercises.map((re) => re.exerciseId),
+      workoutId,
+    )
+  } catch { /* offline — zero prefill */ }
+
+  type WeRow = {
+    workoutExerciseId: string
+    exerciseId: string
+    position: number
+    sets: Array<{
+      id: string
+      setNumber: number
+      weight: number
+      reps: number
+      rest: number | null
+    }>
+  }
+  const weRows: WeRow[] = routine.exercises.map((re, i) => {
+    const workoutExerciseId = crypto.randomUUID()
+    const last = lastByExercise.get(re.exerciseId)
+    const sets = Array.from({ length: re.sets }, (_, j) => {
+      const setNumber = j + 1
+      const prefill = pickPrefillFor(setNumber, last)
       return {
-        workout_exercise_id: we.id,
-        set_number: setNumber,
-        weight_kg: prefill.weight,
+        id: crypto.randomUUID(),
+        setNumber,
+        weight: prefill.weight,
         reps: prefill.reps,
-        rest_seconds: prefill.rest,
-        done: false,
+        rest: prefill.rest,
       }
     })
-    const { error: sErr } = await supabase.from("sets").insert(rows)
-    if (sErr) throw sErr
+    return { workoutExerciseId, exerciseId: re.exerciseId, position: i + 1, sets }
+  })
+
+  const syntheticExercises: ExerciseLog[] = weRows.map((we) => {
+    const ex = exerciseById.get(we.exerciseId) ?? {
+      id: we.exerciseId,
+      name: "Exercise",
+      muscle: "Full Body" as MuscleGroup,
+      equipment: "Barbell" as Exercise["equipment"],
+      userId: null,
+    }
+    return {
+      id: we.workoutExerciseId,
+      exercise: ex,
+      sets: we.sets.map((s) => ({
+        id: s.id,
+        weight: s.weight,
+        reps: s.reps,
+        rest: s.rest ?? undefined,
+        done: false,
+      })),
+    }
+  })
+  const synthetic: Workout = {
+    id: workoutId,
+    title: routine.name,
+    date: startedAt,
+    durationMin: 0,
+    exercises: syntheticExercises,
+    routineId,
   }
-  return workout.id
+  await patchCache<Workout | null>(userId, "active", () => synthetic)
+  await runMutation("startWorkoutFromRoutine", {
+    workoutId,
+    userId,
+    routineId,
+    title: routine.name,
+    startedAt,
+    workoutExercises: weRows,
+  })
+  return workoutId
 }
 
 export async function signOut() {
@@ -1232,6 +1341,10 @@ export async function clearMyData(userId: string) {
     const { error } = await supabase.from(t).delete().eq("user_id", userId)
     if (error) throw error
   }
+  // Wipe local mirror so the cached lists/active workout don't briefly
+  // reappear on the next launch before revalidation kicks in.
+  clearMemoryCache()
+  await dropUserCache(userId)
   invalidateOverrides()
 }
 
@@ -1254,10 +1367,26 @@ export async function updateSet(
   if (patch.weight !== undefined) dbPatch.weight_kg = patch.weight
   if (patch.reps !== undefined) dbPatch.reps = patch.reps
   if (patch.rest !== undefined) dbPatch.rest_seconds = patch.rest
+
+  const userId = await activeUserId()
+  await patchSetInActive(userId, setId, (s) => ({
+    ...s,
+    weight: patch.weight ?? s.weight,
+    reps: patch.reps ?? s.reps,
+    rest: patch.rest === undefined ? s.rest : (patch.rest ?? undefined),
+  }))
   await runMutation("updateSet", { setId, patch: dbPatch })
 }
 
 export async function deleteSet(setId: string) {
+  const userId = await activeUserId()
+  await patchActiveWorkout(userId, (w) => ({
+    ...w,
+    exercises: w.exercises.map((e) => ({
+      ...e,
+      sets: e.sets.filter((s) => s.id !== setId),
+    })),
+  }))
   await runMutation("deleteSet", { setId })
 }
 
@@ -1283,6 +1412,36 @@ export async function addExerciseToWorkout(
     prefill = pickPrefillFor(1, lastByExercise.get(exerciseId))
   } catch { /* fall through with zero prefill */ }
 
+  const userId = await activeUserId()
+  const exercises = (memCache.get("exercises") as Exercise[] | undefined)
+    ?? await readCache<Exercise[]>(userId, "exercises")
+    ?? []
+  const exercise = exercises.find((e) => e.id === exerciseId) ?? {
+    id: exerciseId,
+    name: "Exercise",
+    muscle: "Full Body" as MuscleGroup,
+    equipment: "Barbell" as Exercise["equipment"],
+    userId: null,
+  }
+  const initialSet: SetEntry = {
+    id: initialSetId,
+    weight: prefill.weight,
+    reps: prefill.reps,
+    rest: prefill.rest ?? undefined,
+    done: false,
+  }
+  await patchActiveWorkout(userId, (w) =>
+    w.id === workoutId
+      ? {
+          ...w,
+          exercises: [
+            ...w.exercises,
+            { id: workoutExerciseId, exercise, sets: [initialSet] },
+          ],
+        }
+      : w,
+  )
+
   await runMutation("addExerciseToWorkout", {
     workoutId,
     workoutExerciseId,
@@ -1293,29 +1452,33 @@ export async function addExerciseToWorkout(
     initialReps: prefill.reps,
     initialRest: prefill.rest,
   })
-  return {
-    workoutExerciseId,
-    initialSet: {
-      id: initialSetId,
-      weight: prefill.weight,
-      reps: prefill.reps,
-      rest: prefill.rest ?? undefined,
-      done: false,
-    },
-  }
+  return { workoutExerciseId, initialSet }
 }
 
 export async function removeExerciseFromWorkout(workoutExerciseId: string) {
+  const userId = await activeUserId()
+  await patchActiveWorkout(userId, (w) => ({
+    ...w,
+    exercises: w.exercises.filter((e) => e.id !== workoutExerciseId),
+  }))
   await runMutation("removeExerciseFromWorkout", { workoutExerciseId })
 }
 
 export async function discardWorkout(workoutId: string) {
+  const userId = await activeUserId()
+  await patchCache<Workout | null>(userId, "active", (prev) =>
+    prev?.id === workoutId ? null : prev ?? null,
+  )
   await runMutation("discardWorkout", { workoutId })
 }
 
 export async function updateWorkoutTitle(workoutId: string, title: string) {
   const trimmed = title.trim()
   if (!trimmed) throw new Error("Title required")
+  const userId = await activeUserId()
+  await patchActiveWorkout(userId, (w) =>
+    w.id === workoutId ? { ...w, title: trimmed } : w,
+  )
   await runMutation("updateWorkoutTitle", { workoutId, title: trimmed })
 }
 
@@ -1326,26 +1489,29 @@ export async function createExercise(
   userId: string,
   draft: { name: string; muscle: MuscleGroup; equipment: Exercise["equipment"] }
 ): Promise<Exercise> {
-  const { data, error } = await supabase
-    .from("exercises")
-    .insert({
-      user_id: userId,
-      name: draft.name.trim(),
-      muscle: draft.muscle,
-      equipment: draft.equipment,
-    })
-    .select("id, name, muscle, equipment, user_id")
-    .single()
-  if (error) throw error
-  return rowToExercise(data)
+  const id = crypto.randomUUID()
+  const name = draft.name.trim()
+  const exercise: Exercise = {
+    id, name, muscle: draft.muscle, equipment: draft.equipment, userId,
+  }
+  // Optimistically insert into the exercises cache so it appears in the
+  // picker / list immediately, even while offline.
+  await patchCache<Exercise[]>(userId, "exercises", (prev) => {
+    const list = prev ?? []
+    return [...list, exercise].sort((a, b) => a.name.localeCompare(b.name))
+  })
+  await runMutation("createExercise", {
+    id, userId, name, muscle: draft.muscle, equipment: draft.equipment,
+  })
+  return exercise
 }
 
 export async function deleteExercise(exerciseId: string) {
-  const { error } = await supabase
-    .from("exercises")
-    .delete()
-    .eq("id", exerciseId)
-  if (error) throw error
+  const userId = await activeUserId()
+  await patchCache<Exercise[]>(userId, "exercises", (prev) =>
+    (prev ?? []).filter((e) => e.id !== exerciseId),
+  )
+  await runMutation("deleteExercise", { exerciseId })
 }
 
 export async function renameExercise(
@@ -1355,12 +1521,26 @@ export async function renameExercise(
 ) {
   const trimmed = name.trim()
   if (exercise.userId === null) {
+    // Stock exercise — name override lives in a separate table. Update the
+    // in-memory override map so the new name shows up immediately, even
+    // before the queue drains. invalidateOverrides() below clears the cache
+    // but the writeCache call from patchCache replaces it.
+    if (overridesCache?.userId === userId) {
+      overridesCache.map.set(exercise.id, trimmed)
+    }
+    // Also reflect in the exercises cache so list rendering picks it up.
+    await patchCache<Exercise[]>(userId, "exercises", (prev) =>
+      (prev ?? []).map((e) => e.id === exercise.id ? { ...e, name: trimmed } : e),
+    )
     await runMutation("renameExerciseOverride", {
       userId,
       exerciseId: exercise.id,
       name: trimmed,
     })
   } else {
+    await patchCache<Exercise[]>(userId, "exercises", (prev) =>
+      (prev ?? []).map((e) => e.id === exercise.id ? { ...e, name: trimmed } : e),
+    )
     await runMutation("renameExerciseOwn", {
       exerciseId: exercise.id,
       name: trimmed,
@@ -1381,89 +1561,111 @@ export type RoutineDraft = {
 }
 
 export async function createRoutine(userId: string, draft: RoutineDraft) {
-  const { data: existing, error: pErr } = await supabase
-    .from("routines")
-    .select("position")
-    .eq("user_id", userId)
-    .order("position", { ascending: false })
-    .limit(1)
-  if (pErr) throw pErr
-  const position = (existing?.[0]?.position ?? 0) + 1
-  const { data: r, error } = await supabase
-    .from("routines")
-    .insert({
-      user_id: userId,
-      name: draft.name,
-      description: draft.description ?? null,
-      schedule: draft.schedule ?? null,
-      color: draft.color,
-      position,
-    })
-    .select("id")
-    .single()
-  if (error) throw error
-  if (draft.exercises.length > 0) {
-    const rows = draft.exercises.map((re, i) => ({
-      routine_id: r.id,
-      exercise_id: re.exerciseId,
-      position: i + 1,
-      target_sets: re.sets,
-      target_reps: re.targetReps,
-    }))
-    const { error: reErr } = await supabase.from("routine_exercises").insert(rows)
-    if (reErr) throw reErr
-  }
-  return r.id
-}
+  const id = crypto.randomUUID()
+  // Derive position from the locally cached routines list so we don't need a
+  // server round-trip — when the queue drains, the executor inserts with
+  // this exact position. The server's UNIQUE(user_id, position) constraint
+  // is honored as long as no other client is concurrently creating routines.
+  const cached = (memCache.get("routines") as Routine[] | undefined)
+    ?? await readCache<Routine[]>(userId, "routines")
+    ?? []
+  const position = cached.length + 1
 
-export async function updateRoutine(routineId: string, draft: RoutineDraft) {
-  // Single-transaction RPC: updates routine row + replaces routine_exercises
-  // atomically, so a mid-save failure can't wipe the exercise list.
-  const { error } = await supabase.rpc("update_routine_with_exercises", {
-    p_routine_id: routineId,
-    p_name: draft.name,
-    // Supabase's RPC type-gen flags function args as non-nullable even when
-    // the Postgres parameter accepts NULL. Empty string is equivalent here:
-    // the client reads `description ?? ""` everywhere so "" and NULL look
-    // identical in the UI.
-    p_description: draft.description ?? "",
-    p_schedule: draft.schedule ?? "",
-    p_color: draft.color,
-    p_exercises: draft.exercises.map((re, i) => ({
+  const newRoutine: Routine = {
+    id,
+    name: draft.name,
+    description: draft.description ?? "",
+    schedule: draft.schedule ?? "",
+    color: draft.color,
+    exercises: draft.exercises.map((re) => ({
+      exerciseId: re.exerciseId,
+      sets: re.sets,
+      targetReps: re.targetReps,
+    })),
+  }
+  await patchCache<Routine[]>(userId, "routines", (prev) => [...(prev ?? []), newRoutine])
+
+  await runMutation("createRoutine", {
+    id,
+    userId,
+    name: draft.name,
+    description: draft.description ?? null,
+    schedule: draft.schedule ?? null,
+    color: draft.color,
+    position,
+    exercises: draft.exercises.map((re, i) => ({
+      routine_id: id,
       exercise_id: re.exerciseId,
       position: i + 1,
       target_sets: re.sets,
       target_reps: re.targetReps,
     })),
   })
-  if (error) throw error
+  return id
+}
+
+export async function updateRoutine(routineId: string, draft: RoutineDraft) {
+  const userId = await activeUserId()
+  await patchCache<Routine[]>(userId, "routines", (prev) =>
+    (prev ?? []).map((r) =>
+      r.id === routineId
+        ? {
+            ...r,
+            name: draft.name,
+            description: draft.description ?? "",
+            schedule: draft.schedule ?? "",
+            color: draft.color,
+            exercises: draft.exercises.map((re) => ({
+              exerciseId: re.exerciseId,
+              sets: re.sets,
+              targetReps: re.targetReps,
+            })),
+          }
+        : r,
+    ),
+  )
+  await runMutation("updateRoutine", {
+    routineId,
+    name: draft.name,
+    // Supabase's RPC type-gen flags function args as non-nullable even when
+    // the Postgres parameter accepts NULL. Empty string is equivalent.
+    description: draft.description ?? "",
+    schedule: draft.schedule ?? "",
+    color: draft.color,
+    exercises: draft.exercises.map((re, i) => ({
+      exercise_id: re.exerciseId,
+      position: i + 1,
+      target_sets: re.sets,
+      target_reps: re.targetReps,
+    })),
+  })
 }
 
 export async function deleteRoutine(routineId: string) {
-  const { error } = await supabase.from("routines").delete().eq("id", routineId)
-  if (error) throw error
+  const userId = await activeUserId()
+  await patchCache<Routine[]>(userId, "routines", (prev) =>
+    (prev ?? []).filter((r) => r.id !== routineId),
+  )
+  await runMutation("deleteRoutine", { routineId })
 }
 
-// Two-pass to dodge UNIQUE(user_id, position): park at negatives, then commit.
 export async function reorderRoutines(orderedIds: string[]) {
-  await Promise.all(
-    orderedIds.map(async (id, i) => {
-      const { error } = await supabase
-        .from("routines")
-        .update({ position: -(i + 1) })
-        .eq("id", id)
-      if (error) throw error
-    })
-  )
-  await Promise.all(
-    orderedIds.map(async (id, i) => {
-      const { error } = await supabase
-        .from("routines")
-        .update({ position: i + 1 })
-        .eq("id", id)
-      if (error) throw error
-    })
-  )
+  const userId = await activeUserId()
+  await patchCache<Routine[]>(userId, "routines", (prev) => {
+    if (!prev) return []
+    const byId = new Map(prev.map((r) => [r.id, r]))
+    const reordered: Routine[] = []
+    for (const id of orderedIds) {
+      const r = byId.get(id)
+      if (r) reordered.push(r)
+    }
+    // Append any routines not in orderedIds (shouldn't happen, but defensive).
+    for (const r of prev) {
+      if (!orderedIds.includes(r.id)) reordered.push(r)
+    }
+    return reordered
+  })
+  await runMutation("reorderRoutines", { orderedIds })
 }
 
 // ---------------------------------------------------------------------

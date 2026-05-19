@@ -43,6 +43,7 @@ export type MutationKind =
   | "deleteRoutine"
   | "reorderRoutines"
   | "startEmptyWorkout"
+  | "startWorkoutFromRoutine"
 
 type QueueEntry = {
   id: string
@@ -318,6 +319,50 @@ async function executeMutation(kind: MutationKind, payload: any): Promise<void> 
         started_at: payload.startedAt,
       })
       if (error) throw error
+      return
+    }
+    case "startWorkoutFromRoutine": {
+      const { error: wErr } = await supabase.from("workouts").insert({
+        id: payload.workoutId,
+        user_id: payload.userId,
+        routine_id: payload.routineId,
+        title: payload.title,
+        started_at: payload.startedAt,
+      })
+      if (wErr) throw wErr
+      type WeRow = {
+        workoutExerciseId: string
+        exerciseId: string
+        position: number
+        sets: Array<{ id: string; setNumber: number; weight: number; reps: number; rest: number | null }>
+      }
+      const weRows = payload.workoutExercises as WeRow[]
+      if (weRows.length > 0) {
+        const { error: weErr } = await supabase.from("workout_exercises").insert(
+          weRows.map((we) => ({
+            id: we.workoutExerciseId,
+            workout_id: payload.workoutId,
+            exercise_id: we.exerciseId,
+            position: we.position,
+          })),
+        )
+        if (weErr) throw weErr
+        const setRows = weRows.flatMap((we) =>
+          we.sets.map((s) => ({
+            id: s.id,
+            workout_exercise_id: we.workoutExerciseId,
+            set_number: s.setNumber,
+            weight_kg: s.weight,
+            reps: s.reps,
+            rest_seconds: s.rest,
+            done: false,
+          })),
+        )
+        if (setRows.length > 0) {
+          const { error: sErr } = await supabase.from("sets").insert(setRows)
+          if (sErr) throw sErr
+        }
+      }
       return
     }
     default: {
