@@ -1,6 +1,6 @@
 import * as React from "react"
 import {
-  Settings, Bell, Sun, Moon, Monitor, Download, Share2, LogOut, ChevronRight, Weight, Target, Calendar, Loader2, RefreshCw,
+  Settings, Bell, Sun, Moon, Monitor, Download, Share2, LogOut, ChevronRight, Weight, Target, Calendar, Loader2, RefreshCw, CloudOff,
 } from "lucide-react"
 import { ScreenHeader } from "@/components/ScreenHeader"
 import { Card } from "@/components/ui/card"
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useAuth } from "@/lib/auth"
 import { useProfile, useStats, usePersonalRecords, clearMyData } from "@/lib/api"
+import { useNetworkStatus } from "@/lib/network"
 import { APP_VERSION } from "@/lib/version"
 import { ProfileEditSheet } from "@/components/ProfileEditSheet"
 import { AppearanceSheet } from "@/components/AppearanceSheet"
@@ -26,6 +27,8 @@ export function Profile() {
   const [confirmClear, setConfirmClear] = React.useState(false)
   const [clearing, setClearing] = React.useState(false)
   const [clearError, setClearError] = React.useState<string | null>(null)
+  const [offlineNotice, setOfflineNotice] = React.useState(false)
+  const { online } = useNetworkStatus()
   const { checking: checkingUpdate, triggerCheck: checkForUpdates } = useSwUpdate()
   const { mode } = useTheme()
   const appearanceIcon = mode === "dark" ? <Moon /> : mode === "light" ? <Sun /> : <Monitor />
@@ -140,7 +143,14 @@ export function Profile() {
 
         <Button
           variant="destructive"
-          onClick={() => { setClearError(null); setConfirmClear(true) }}
+          onClick={() => {
+            if (!online) {
+              setOfflineNotice(true)
+              return
+            }
+            setClearError(null)
+            setConfirmClear(true)
+          }}
           disabled={clearing}
           className="mt-5 w-full"
         >
@@ -177,6 +187,18 @@ export function Profile() {
           onConfirm={doClearData}
         />
       )}
+
+      <ConfirmDialog
+        open={offlineNotice}
+        onOpenChange={(o) => { if (!o) setOfflineNotice(false) }}
+        title="You're offline"
+        description="Clearing your data needs an internet connection so the deletes can sync to the server. Reconnect and try again."
+        confirmLabel="OK"
+        tone="info"
+        hideCancel
+        icon={<CloudOff className="h-6 w-6" />}
+        onConfirm={() => setOfflineNotice(false)}
+      />
 
     </div>
   )
