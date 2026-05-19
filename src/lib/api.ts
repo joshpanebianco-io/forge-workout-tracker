@@ -4,6 +4,9 @@ import { useAuth } from "./auth"
 import {
   addDays, startOfWeek, startOfMonth, startOfDay, localDayKey, localMonthKey,
 } from "./utils"
+import { readCache, writeCache } from "./cache"
+import { runMutation } from "./mutation-queue"
+import { onNetworkChange } from "./network"
 import type {
   Exercise, ExerciseLog, MuscleGroup, PR, Routine, SetEntry, Workout,
 } from "./types"
@@ -61,39 +64,143 @@ function useOverrideEpoch() {
 }
 
 // ---------------------------------------------------------------------
-// generic data hook
+// generic data hook with stale-while-revalidate persistence
 //
-// `loading` is true only until the FIRST fetch settles. Subsequent fetches
-// (refetch, dep changes) run in the background and keep the prior data
-// visible — no spinner flicker. The exposed `setData` lets callers do
-// optimistic updates without round-tripping the server.
+// Cached fetch results are stored in two tiers:
+//   1. In-memory Map → synchronous, zero-flicker on tab switches within a
+//      session (the common path).
+//   2. IndexedDB → survives app launch, offline reloads, and PWA cold start.
+//
+// On mount we check the memory cache synchronously; if there's a hit we
+// render its data immediately with `loading: false`. If only IDB has it, the
+// hydrate completes a tick later and we swap in cached data while the network
+// fetch is still in flight. The network result, once it arrives, supersedes
+// the cache and writes back to both tiers.
+//
+// `loading` only ever flips to true on first mount with no cache available.
+// Refetches and dep changes keep the prior data visible.
 // ---------------------------------------------------------------------
+const memCache = new Map<string, unknown>()
+
+export function clearMemoryCache() {
+  memCache.clear()
+}
+
+// Global revalidation pulse: every useAsync call listens. Bumping it forces
+// all live hooks to re-run their fetcher in the background. We pulse on
+// reconnect so the UI catches up to whatever the queue just synced.
+let revalidateEpoch = 0
+const revalidateListeners = new Set<() => void>()
+
+function pulseRevalidation() {
+  revalidateEpoch++
+  revalidateListeners.forEach((cb) => cb())
+}
+
+if (typeof window !== "undefined") {
+  onNetworkChange((online) => {
+    if (online) {
+      // Defer past the queue-drain kickoff so we revalidate AFTER mutations
+      // have had a chance to land on the server. 500ms is generous; the
+      // important thing is ordering, not exact timing.
+      setTimeout(pulseRevalidation, 500)
+    }
+  })
+}
+
+function useRevalidationEpoch() {
+  const [, set] = React.useState(revalidateEpoch)
+  React.useEffect(() => {
+    const cb = () => set(revalidateEpoch)
+    revalidateListeners.add(cb)
+    return () => { revalidateListeners.delete(cb) }
+  }, [])
+  return revalidateEpoch
+}
+
+type CacheOpts = {
+  // Stable key for this hook call. Composed from the hook name + relevant
+  // params. Omit to opt out of persistence entirely.
+  cacheKey?: string
+  // Scopes the persisted entry per-user. Pass the current user id so two
+  // accounts on the same device can't read each other's data.
+  userId?: string | null
+}
+
 function useAsync<T>(
   fetcher: () => Promise<T>,
   deps: React.DependencyList,
   initial: T,
+  opts?: CacheOpts,
 ) {
-  const [data, setData] = React.useState<T>(initial)
-  const [loading, setLoading] = React.useState(true)
+  const cacheKey = opts?.cacheKey
+  const userId = opts?.userId ?? null
+  const cacheEnabled = !!cacheKey
+  const reconnectEpoch = useRevalidationEpoch()
+
+  // Synchronous warm-cache lookup. If we have it in memory, render with it
+  // immediately and skip the loading state.
+  const memHit = cacheEnabled
+    ? (memCache.get(cacheKey!) as T | undefined)
+    : undefined
+
+  const [data, setData] = React.useState<T>(
+    memHit !== undefined ? memHit : initial,
+  )
+  const [loading, setLoading] = React.useState(memHit === undefined)
   const [error, setError] = React.useState<string | null>(null)
   const [version, setVersion] = React.useState(0)
-  const settledRef = React.useRef(false)
+  const settledRef = React.useRef(memHit !== undefined)
 
   React.useEffect(() => {
     let cancelled = false
+    let networkSettled = false
+
+    // Kick off IDB hydrate in parallel with the network. If the cached value
+    // arrives before the network resolves, surface it so the user sees real
+    // data fast — but ignore it once fresh data lands.
+    if (cacheEnabled && memHit === undefined) {
+      readCache<T>(userId, cacheKey!).then((cached) => {
+        if (cancelled || cached === undefined || networkSettled) return
+        memCache.set(cacheKey!, cached)
+        setData(cached)
+        if (!settledRef.current) {
+          settledRef.current = true
+          setLoading(false)
+        }
+      }).catch(() => { /* ignore */ })
+    }
+
     fetcher()
-      .then((d) => { if (!cancelled) { setData(d); setError(null) } })
-      .catch((e) => { if (!cancelled) setError(e?.message ?? String(e)) })
+      .then((d) => {
+        if (cancelled) return
+        setData(d)
+        setError(null)
+        if (cacheEnabled) {
+          memCache.set(cacheKey!, d)
+          writeCache(userId, cacheKey!, d).catch(() => { /* ignore */ })
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return
+        // Only surface the error if we have nothing to show. Cached data is
+        // better than an error banner when the user is briefly offline.
+        if (memHit === undefined && !settledRef.current) {
+          setError(e?.message ?? String(e))
+        }
+      })
       .finally(() => {
         if (cancelled) return
+        networkSettled = true
         if (!settledRef.current) {
           settledRef.current = true
           setLoading(false)
         }
       })
+
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, version])
+  }, [...deps, version, reconnectEpoch])
 
   const refetch = React.useCallback(() => setVersion((v) => v + 1), [])
   return { data, loading, error, refetch, setData }
@@ -117,7 +224,7 @@ export function useExercises() {
     return (data ?? [])
       .map((r) => rowToExercise(r, overrides))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [user?.id, epoch], [])
+  }, [user?.id, epoch], [], { cacheKey: "exercises", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -149,7 +256,7 @@ export function useRoutines() {
           targetReps: re.target_reps,
         })),
     }))
-  }, [user?.id], [])
+  }, [user?.id], [], { cacheKey: "routines", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -209,7 +316,9 @@ export function useRecentWorkouts(limit = 20) {
     ])
     if (error) throw error
     return (data ?? []).map((w) => rowToWorkout(w, overrides))
-  }, [user?.id, limit, epoch], [])
+  }, [user?.id, limit, epoch], [], {
+    cacheKey: `recent:${limit}`, userId: user?.id ?? null,
+  })
 }
 
 export function useWeeklyWorkouts(weekStart: Date) {
@@ -230,7 +339,9 @@ export function useWeeklyWorkouts(weekStart: Date) {
     ])
     if (error) throw error
     return (data ?? []).map((w) => rowToWorkout(w, overrides))
-  }, [user?.id, startIso, endIso, epoch], [])
+  }, [user?.id, startIso, endIso, epoch], [], {
+    cacheKey: `weekly:${startIso}`, userId: user?.id ?? null,
+  })
 }
 
 export function useMonthWorkoutDates(monthStart: Date) {
@@ -249,7 +360,9 @@ export function useMonthWorkoutDates(monthStart: Date) {
       .not("duration_min", "is", null)
     if (error) throw error
     return (data ?? []).map((r: any) => r.started_at)
-  }, [user?.id, startIso, endIso], [])
+  }, [user?.id, startIso, endIso], [], {
+    cacheKey: `monthDates:${startIso}`, userId: user?.id ?? null,
+  })
 }
 
 export function useActiveWorkout() {
@@ -269,7 +382,7 @@ export function useActiveWorkout() {
     ])
     if (error) throw error
     return data ? rowToWorkout(data, overrides) : null
-  }, [user?.id, epoch], null)
+  }, [user?.id, epoch], null, { cacheKey: "active", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -296,7 +409,7 @@ export function usePersonalRecords() {
       date: r.achieved_at,
       estimated1RM: Math.round(Number(r.estimated_1rm)),
     }))
-  }, [user?.id, epoch], [])
+  }, [user?.id, epoch], [], { cacheKey: "prs", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -333,7 +446,7 @@ export function useProfile() {
           })
         : "",
     }
-  }, [user?.id], null)
+  }, [user?.id], null, { cacheKey: "profile", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -429,7 +542,7 @@ export function useStats() {
     lastWeek: { workouts: 0, sets: 0, minutes: 0, prCount: 0 },
     streak: 0,
     totalWorkouts: 0,
-  })
+  }, { cacheKey: "stats", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -473,7 +586,9 @@ export function useHistoryStats() {
     }
 
     return { monthCount, avgHoursPerWeek }
-  }, [user?.id], { monthCount: 0, avgHoursPerWeek: 0 })
+  }, [user?.id], { monthCount: 0, avgHoursPerWeek: 0 }, {
+    cacheKey: "historyStats", userId: user?.id ?? null,
+  })
 }
 
 // ---------------------------------------------------------------------
@@ -508,7 +623,7 @@ export function useWeeklyDailyStats() {
       }
     }
     return out
-  }, [user?.id], [])
+  }, [user?.id], [], { cacheKey: "weeklyDaily", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -575,7 +690,7 @@ export function useTrainedExercises() {
         lastTrained: v.lastTrained,
       }))
       .sort((a, b) => (b.lastTrained > a.lastTrained ? 1 : -1))
-  }, [user?.id, epoch], [])
+  }, [user?.id, epoch], [], { cacheKey: "trained", userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
@@ -651,7 +766,9 @@ export function useExerciseProgress(exerciseId: string | null) {
     }
     points.sort((a, b) => (a.date > b.date ? 1 : -1))
     return points
-  }, [user?.id, exerciseId], [])
+  }, [user?.id, exerciseId], [], {
+    cacheKey: `progress:${exerciseId ?? "_"}`, userId: user?.id ?? null,
+  })
 }
 
 // ---------------------------------------------------------------------
@@ -698,7 +815,9 @@ export function useWeeklyMuscleBreakdown() {
       .map(([muscle, sets]) => ({ muscle, sets }))
       .sort((a, b) => b.sets - a.sets)
     return { rows, totalSets }
-  }, [user?.id], { rows: [], totalSets: 0 })
+  }, [user?.id], { rows: [], totalSets: 0 }, {
+    cacheKey: "weeklyMuscle", userId: user?.id ?? null,
+  })
 }
 
 // ---------------------------------------------------------------------
@@ -964,60 +1083,54 @@ export function useTrends(period: TrendsPeriod) {
     topMuscles: [],
     prs: [],
     bucket: "week",
-  })
+  }, { cacheKey: `trends:${period}`, userId: user?.id ?? null })
 }
 
 // ---------------------------------------------------------------------
 // mutations
+//
+// Each mutation that needs to work offline routes through runMutation, which
+// either calls Supabase directly (online) or persists the payload to the
+// mutation queue for replay on reconnect (offline / network error). Inserts
+// generate their own UUIDs so optimistic UI state and the eventual server
+// row share a single, stable id.
 // ---------------------------------------------------------------------
 export async function toggleSetDone(setId: string, done: boolean) {
-  const { error } = await supabase.from("sets").update({ done }).eq("id", setId)
-  if (error) throw error
+  await runMutation("toggleSetDone", { setId, done })
 }
 
 export async function addSet(
   workoutExerciseId: string,
   prev: { weight: number; reps: number; rest?: number } | null,
+  setNumber: number,
 ): Promise<SetEntry> {
-  const { data: existing, error: countErr } = await supabase
-    .from("sets")
-    .select("set_number")
-    .eq("workout_exercise_id", workoutExerciseId)
-    .order("set_number", { ascending: false })
-    .limit(1)
-  if (countErr) throw countErr
-  const next = (existing?.[0]?.set_number ?? 0) + 1
-  const { data: row, error } = await supabase
-    .from("sets")
-    .insert({
-      workout_exercise_id: workoutExerciseId,
-      set_number: next,
-      weight_kg: prev?.weight ?? 0,
-      reps: prev?.reps ?? 8,
-      rest_seconds: prev?.rest ?? null,
-      done: false,
-    })
-    .select("id, weight_kg, reps, rest_seconds, done")
-    .single()
-  if (error) throw error
+  const id = crypto.randomUUID()
+  const weight = prev?.weight ?? 0
+  const reps = prev?.reps ?? 8
+  const rest = prev?.rest ?? null
+  await runMutation("addSet", {
+    id,
+    workoutExerciseId,
+    setNumber,
+    weight,
+    reps,
+    rest,
+  })
   return {
-    id: row.id,
-    weight: Number(row.weight_kg),
-    reps: row.reps,
-    rest: row.rest_seconds ?? undefined,
-    done: row.done,
+    id,
+    weight,
+    reps,
+    rest: rest ?? undefined,
+    done: false,
   }
 }
 
 export async function finishWorkout(workoutId: string, durationMin: number) {
-  const { error } = await supabase
-    .from("workouts")
-    .update({
-      ended_at: new Date().toISOString(),
-      duration_min: durationMin,
-    })
-    .eq("id", workoutId)
-  if (error) throw error
+  await runMutation("finishWorkout", {
+    workoutId,
+    durationMin,
+    endedAt: new Date().toISOString(),
+  })
 }
 
 export async function startEmptyWorkout(userId: string, title = "Quick session") {
@@ -1133,21 +1246,19 @@ export async function updateSet(
     rest?: number | null
   }
 ) {
-  const payload: {
+  const dbPatch: {
     weight_kg?: number
     reps?: number
     rest_seconds?: number | null
   } = {}
-  if (patch.weight !== undefined) payload.weight_kg = patch.weight
-  if (patch.reps !== undefined) payload.reps = patch.reps
-  if (patch.rest !== undefined) payload.rest_seconds = patch.rest
-  const { error } = await supabase.from("sets").update(payload).eq("id", setId)
-  if (error) throw error
+  if (patch.weight !== undefined) dbPatch.weight_kg = patch.weight
+  if (patch.reps !== undefined) dbPatch.reps = patch.reps
+  if (patch.rest !== undefined) dbPatch.rest_seconds = patch.rest
+  await runMutation("updateSet", { setId, patch: dbPatch })
 }
 
 export async function deleteSet(setId: string) {
-  const { error } = await supabase.from("sets").delete().eq("id", setId)
-  if (error) throw error
+  await runMutation("deleteSet", { setId })
 }
 
 // ---------------------------------------------------------------------
@@ -1156,69 +1267,56 @@ export async function deleteSet(setId: string) {
 export async function addExerciseToWorkout(
   workoutId: string,
   exerciseId: string,
+  position: number,
 ): Promise<{ workoutExerciseId: string; initialSet: SetEntry }> {
-  const { data: existing, error: pErr } = await supabase
-    .from("workout_exercises")
-    .select("position")
-    .eq("workout_id", workoutId)
-    .order("position", { ascending: false })
-    .limit(1)
-  if (pErr) throw pErr
-  const position = (existing?.[0]?.position ?? 0) + 1
-  const { data: we, error } = await supabase
-    .from("workout_exercises")
-    .insert({ workout_id: workoutId, exercise_id: exerciseId, position })
-    .select("id")
-    .single()
-  if (error) throw error
-  const lastByExercise = await fetchLastSessionSetsByExercise([exerciseId], workoutId)
-  const prefill = pickPrefillFor(1, lastByExercise.get(exerciseId))
-  const { data: setRow, error: sErr } = await supabase
-    .from("sets")
-    .insert({
-      workout_exercise_id: we.id,
-      set_number: 1,
-      weight_kg: prefill.weight,
-      reps: prefill.reps,
-      rest_seconds: prefill.rest,
-      done: false,
-    })
-    .select("id, weight_kg, reps, rest_seconds, done")
-    .single()
-  if (sErr) throw sErr
+  const workoutExerciseId = crypto.randomUUID()
+  const initialSetId = crypto.randomUUID()
+
+  // Best-effort prefill from the user's last session for this exercise.
+  // Offline-safe: if the query fails (no network), fall back to a zero set
+  // so the mutation can still be queued and the user can start logging.
+  let prefill: { weight: number; reps: number; rest: number | null } = {
+    weight: 0, reps: 0, rest: null,
+  }
+  try {
+    const lastByExercise = await fetchLastSessionSetsByExercise([exerciseId], workoutId)
+    prefill = pickPrefillFor(1, lastByExercise.get(exerciseId))
+  } catch { /* fall through with zero prefill */ }
+
+  await runMutation("addExerciseToWorkout", {
+    workoutId,
+    workoutExerciseId,
+    exerciseId,
+    position,
+    initialSetId,
+    initialWeight: prefill.weight,
+    initialReps: prefill.reps,
+    initialRest: prefill.rest,
+  })
   return {
-    workoutExerciseId: we.id,
+    workoutExerciseId,
     initialSet: {
-      id: setRow.id,
-      weight: Number(setRow.weight_kg),
-      reps: setRow.reps,
-      rest: setRow.rest_seconds ?? undefined,
-      done: setRow.done,
+      id: initialSetId,
+      weight: prefill.weight,
+      reps: prefill.reps,
+      rest: prefill.rest ?? undefined,
+      done: false,
     },
   }
 }
 
 export async function removeExerciseFromWorkout(workoutExerciseId: string) {
-  const { error } = await supabase
-    .from("workout_exercises")
-    .delete()
-    .eq("id", workoutExerciseId)
-  if (error) throw error
+  await runMutation("removeExerciseFromWorkout", { workoutExerciseId })
 }
 
 export async function discardWorkout(workoutId: string) {
-  const { error } = await supabase.from("workouts").delete().eq("id", workoutId)
-  if (error) throw error
+  await runMutation("discardWorkout", { workoutId })
 }
 
 export async function updateWorkoutTitle(workoutId: string, title: string) {
   const trimmed = title.trim()
   if (!trimmed) throw new Error("Title required")
-  const { error } = await supabase
-    .from("workouts")
-    .update({ title: trimmed })
-    .eq("id", workoutId)
-  if (error) throw error
+  await runMutation("updateWorkoutTitle", { workoutId, title: trimmed })
 }
 
 // ---------------------------------------------------------------------
@@ -1257,24 +1355,16 @@ export async function renameExercise(
 ) {
   const trimmed = name.trim()
   if (exercise.userId === null) {
-    const { error } = await supabase
-      .from("exercise_overrides")
-      .upsert(
-        {
-          user_id: userId,
-          exercise_id: exercise.id,
-          name: trimmed,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,exercise_id" },
-      )
-    if (error) throw error
+    await runMutation("renameExerciseOverride", {
+      userId,
+      exerciseId: exercise.id,
+      name: trimmed,
+    })
   } else {
-    const { error } = await supabase
-      .from("exercises")
-      .update({ name: trimmed })
-      .eq("id", exercise.id)
-    if (error) throw error
+    await runMutation("renameExerciseOwn", {
+      exerciseId: exercise.id,
+      name: trimmed,
+    })
   }
   invalidateOverrides()
 }
@@ -1383,13 +1473,7 @@ export async function updateProfile(
   userId: string,
   patch: { name?: string; handle?: string; bodyweight_kg?: number | null; goal?: string }
 ) {
-  const { error } = await supabase
-    .from("profiles")
-    .upsert(
-      { id: userId, ...patch, updated_at: new Date().toISOString() },
-      { onConflict: "id" },
-    )
-  if (error) throw error
+  await runMutation("updateProfile", { userId, patch })
 }
 
 // ---------------------------------------------------------------------
@@ -1477,5 +1561,7 @@ export function useWorkout(workoutId: string | null) {
     ])
     if (error) throw error
     return data ? rowToWorkout(data, overrides) : null
-  }, [user?.id, workoutId, epoch], null)
+  }, [user?.id, workoutId, epoch], null, {
+    cacheKey: `workout:${workoutId ?? "_"}`, userId: user?.id ?? null,
+  })
 }

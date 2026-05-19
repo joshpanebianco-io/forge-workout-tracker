@@ -1,6 +1,8 @@
 import * as React from "react"
 import type { Session, User } from "@supabase/supabase-js"
 import { supabase } from "./supabase"
+import { dropUserCache, dropAllCache } from "./cache"
+import { clearMemoryCache } from "./api"
 
 type AuthContextValue = {
   session: Session | null
@@ -17,13 +19,37 @@ const AuthContext = React.createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = React.useState<Session | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const lastUserIdRef = React.useRef<string | null | undefined>(undefined)
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
+      lastUserIdRef.current = data.session?.user.id ?? null
       setLoading(false)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      const nextUserId = s?.user.id ?? null
+      const prevUserId = lastUserIdRef.current
+
+      // Flush all persisted caches when:
+      //   - the user explicitly signs out (SIGNED_OUT)
+      //   - or the active user id changes (different account on same device)
+      // This guarantees we never render user A's cached data while user B is
+      // signed in. We intentionally do NOT clear on token refresh.
+      if (event === "SIGNED_OUT") {
+        clearMemoryCache()
+        // Drop everything — we don't know which user the cache belonged to.
+        dropAllCache().catch(() => { /* ignore */ })
+      } else if (
+        prevUserId !== undefined &&
+        prevUserId !== nextUserId &&
+        prevUserId !== null
+      ) {
+        clearMemoryCache()
+        dropUserCache(prevUserId).catch(() => { /* ignore */ })
+      }
+
+      lastUserIdRef.current = nextUserId
       setSession(s)
     })
     return () => sub.subscription.unsubscribe()

@@ -1,6 +1,7 @@
 import * as React from "react"
 import { BottomNav, type Tab } from "./BottomNav"
 import { DeviceFrame } from "./DeviceFrame"
+import { OfflineBanner } from "./OfflineBanner"
 
 export function AppShell({
   active,
@@ -13,7 +14,8 @@ export function AppShell({
 }) {
   return (
     <DeviceFrame>
-      <div className="flex h-full flex-col">
+      <div className="relative flex h-full flex-col">
+        <OfflineBanner />
         {/* Status bar spacer (notch area on mobile) */}
         <div className="h-[env(safe-area-inset-top)] shrink-0 md:h-9" />
         {/* Scrollable content */}
