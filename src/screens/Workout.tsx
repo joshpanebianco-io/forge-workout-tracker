@@ -277,10 +277,13 @@ function ActiveSession({
   const handleAddSet = async (exId: string) => {
     const log = logsRef.current.find((e) => e.id === exId)
     const last = log?.sets[log.sets.length - 1]
+    const setNumber = (log?.sets.length ?? 0) + 1
     try {
-      const created = await addSet(exId, last
-        ? { weight: last.weight, reps: last.reps, rest: last.rest }
-        : null)
+      const created = await addSet(
+        exId,
+        last ? { weight: last.weight, reps: last.reps, rest: last.rest } : null,
+        setNumber,
+      )
       setLogs((cur) =>
         cur.map((e) => e.id === exId ? { ...e, sets: [...e.sets, created] } : e)
       )
@@ -349,8 +352,13 @@ function ActiveSession({
     setPickerAdding(true)
     try {
       for (const ex of picked) {
+        const position = logsRef.current.length + 1
         try {
-          const { workoutExerciseId, initialSet } = await addExerciseToWorkout(workout.id, ex.id)
+          const { workoutExerciseId, initialSet } = await addExerciseToWorkout(
+            workout.id,
+            ex.id,
+            position,
+          )
           setLogs((cur) => [
             ...cur,
             { id: workoutExerciseId, exercise: ex, sets: [initialSet] },

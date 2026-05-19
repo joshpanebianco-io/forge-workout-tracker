@@ -5,6 +5,7 @@ import App from './App.tsx'
 import { AuthProvider } from './lib/auth.tsx'
 import { ThemeProvider } from './lib/theme.tsx'
 import { WorkoutSessionProvider } from './lib/session.tsx'
+import { NetworkProvider } from './lib/network.tsx'
 
 // Browser-side portrait lock — only takes effect in installed PWA / fullscreen.
 // In a normal browser tab the call will reject; we swallow it.
@@ -16,11 +17,13 @@ if (screenOrientation?.lock) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <AuthProvider>
-        <WorkoutSessionProvider>
-          <App />
-        </WorkoutSessionProvider>
-      </AuthProvider>
+      <NetworkProvider>
+        <AuthProvider>
+          <WorkoutSessionProvider>
+            <App />
+          </WorkoutSessionProvider>
+        </AuthProvider>
+      </NetworkProvider>
     </ThemeProvider>
   </StrictMode>,
 )
