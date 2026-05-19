@@ -1300,17 +1300,19 @@ export async function startWorkoutFromRoutine(routineId: string, userId: string)
     ?? []
   const exerciseById = new Map(exercises.map((e) => [e.id, e]))
 
-  // Best-effort prefill from last session, baked into the payload so replay
-  // is deterministic. Falls back to zeros when offline / not yet cached.
+  // Prefill from last session, baked into the payload so replay is
+  // deterministic. getLastByExercise hits the server when online (and
+  // refreshes the cache) but falls back to whatever's already cached when
+  // offline — so a routine started offline still gets sensible weight/reps
+  // values as long as the user has trained those exercises before with the
+  // app online.
   const workoutId = crypto.randomUUID()
   const startedAt = new Date().toISOString()
-  let lastByExercise: Map<string, LastSessionSet[]> = new Map()
-  try {
-    lastByExercise = await fetchLastSessionSetsByExercise(
-      routine.exercises.map((re) => re.exerciseId),
-      workoutId,
-    )
-  } catch { /* offline — zero prefill */ }
+  const lastByExercise = await getLastByExercise(
+    userId,
+    routine.exercises.map((re) => re.exerciseId),
+    workoutId,
+  )
 
   type WeRow = {
     workoutExerciseId: string
@@ -1456,18 +1458,11 @@ export async function addExerciseToWorkout(
   const workoutExerciseId = crypto.randomUUID()
   const initialSetId = crypto.randomUUID()
 
-  // Best-effort prefill from the user's last session for this exercise.
-  // Offline-safe: if the query fails (no network), fall back to a zero set
-  // so the mutation can still be queued and the user can start logging.
-  let prefill: { weight: number; reps: number; rest: number | null } = {
-    weight: 0, reps: 0, rest: null,
-  }
-  try {
-    const lastByExercise = await fetchLastSessionSetsByExercise([exerciseId], workoutId)
-    prefill = pickPrefillFor(1, lastByExercise.get(exerciseId))
-  } catch { /* fall through with zero prefill */ }
-
   const userId = await activeUserId()
+  // Prefill via the cached wrapper: server-fresh when online, falls back to
+  // cached last-session values when offline. Empty map → zero prefill.
+  const lastByExercise = await getLastByExercise(userId, [exerciseId], workoutId)
+  const prefill = pickPrefillFor(1, lastByExercise.get(exerciseId))
   const exercises = (memCache.get("exercises") as Exercise[] | undefined)
     ?? await readCache<Exercise[]>(userId, "exercises")
     ?? []
@@ -1741,6 +1736,43 @@ type LastSessionSet = {
   weight_kg: number
   reps: number
   rest_seconds: number | null
+}
+
+// Cache wrapper around the raw server-side prefill query. On success we
+// merge the fresh result into a per-user `"prefill"` cache entry so that
+// future offline starts have something to prefill with; on failure (no
+// network) we fall back to whatever subset of the requested exercises is
+// already cached. The cache is a plain Record (JSON-friendly for IDB).
+async function getLastByExercise(
+  userId: string | null,
+  exerciseIds: string[],
+  excludeWorkoutId: string | null,
+): Promise<Map<string, LastSessionSet[]>> {
+  if (exerciseIds.length === 0) return new Map()
+  const cacheKey = "prefill"
+  try {
+    const fresh = await fetchLastSessionSetsByExercise(exerciseIds, excludeWorkoutId)
+    const prior =
+      (memCache.get(cacheKey) as Record<string, LastSessionSet[]> | undefined)
+      ?? (await readCache<Record<string, LastSessionSet[]>>(userId, cacheKey))
+      ?? {}
+    const merged = { ...prior }
+    for (const [k, v] of fresh) merged[k] = v
+    memCache.set(cacheKey, merged)
+    writeCache(userId, cacheKey, merged).catch(() => { /* ignore */ })
+    return fresh
+  } catch {
+    const cached =
+      (memCache.get(cacheKey) as Record<string, LastSessionSet[]> | undefined)
+      ?? (await readCache<Record<string, LastSessionSet[]>>(userId, cacheKey))
+      ?? {}
+    const out = new Map<string, LastSessionSet[]>()
+    for (const id of exerciseIds) {
+      const v = cached[id]
+      if (v) out.set(id, v)
+    }
+    return out
+  }
 }
 
 async function fetchLastSessionSetsByExercise(
