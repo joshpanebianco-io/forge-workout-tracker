@@ -6,7 +6,7 @@ import {
 } from "./utils"
 import { readCache, writeCache, dropUserCache } from "./cache"
 import { runMutation } from "./mutation-queue"
-import { onNetworkChange } from "./network"
+import { isOnline, onNetworkChange } from "./network"
 import type {
   Exercise, ExerciseLog, MuscleGroup, PR, Routine, SetEntry, Workout,
 } from "./types"
@@ -217,6 +217,32 @@ function useAsync<T>(
           setLoading(false)
         }
       }).catch(() => { /* ignore */ })
+    }
+
+    // Offline: don't run the fetcher. Workbox's NetworkFirst will serve a
+    // stale cached GET that would clobber any optimistic patches the user's
+    // mutations have made (e.g. a new exercise, a freshly started workout).
+    // Trust the mem/IDB cache layer instead — the reconnect pulse re-runs
+    // this effect with isOnline() === true once we're back.
+    if (!isOnline()) {
+      networkSettled = true
+      if (!settledRef.current) {
+        if (memHit !== undefined) {
+          settledRef.current = true
+          setLoading(false)
+        } else {
+          // No mem hit — IDB hydrate above may still resolve. If it doesn't
+          // (no cache at all yet), settle on a short timer so we don't spin
+          // forever.
+          const t = setTimeout(() => {
+            if (cancelled || settledRef.current) return
+            settledRef.current = true
+            setLoading(false)
+          }, 150)
+          return () => { cancelled = true; clearTimeout(t) }
+        }
+      }
+      return () => { cancelled = true }
     }
 
     fetcher()

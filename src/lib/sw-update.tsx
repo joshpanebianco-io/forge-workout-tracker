@@ -117,7 +117,12 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
   const triggerCheck = React.useCallback(() => runCheck(true), [runCheck])
 
   const apply = () => {
+    // Clear needRefresh as well — otherwise the effect at the top of this
+    // provider re-fires setResult("available") the moment we set result to
+    // null, and the dialog pops a second time before updateServiceWorker
+    // actually swaps in the new worker and reloads.
     setResult(null)
+    setNeedRefresh(false)
     updateServiceWorker(true)
   }
 
