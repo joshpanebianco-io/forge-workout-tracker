@@ -56,27 +56,48 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
         if (manual) setResult("up-to-date")
         return
       }
-      // Kick off a fetch for the worker script. If there's a new version
-      // available the browser starts installing it.
+      // Kick off the update check. If a new worker is available, the
+      // browser starts installing it; if one's already installing from a
+      // prior check, this is a no-op.
       await reg.update()
-      // Poll for reg.waiting to populate. We intentionally don't listen for
-      // the `updatefound` event because that fires when install BEGINS —
-      // not when the new worker is ready to take over. Acting on
-      // updatefound surfaces the "update available" dialog too early, and
-      // clicking "Reload now" then has no waiting worker to skip-waiting
-      // against, so the reload silently no-ops until the install actually
-      // finishes (at which point vite-plugin-pwa fires needRefresh and we
-      // get a second, working dialog). Polling reg.waiting avoids that.
-      const deadline = Date.now() + (manual ? 4000 : 2500)
-      while (Date.now() < deadline) {
-        if (reg.waiting) break
-        await new Promise((r) => setTimeout(r, 200))
+      // Fast path: a previous check already produced a waiting worker.
+      if (reg.waiting) {
+        setResult("available")
+        return
       }
-      // If a waiting worker exists, the needRefresh effect will (or already
-      // has) opened the dialog; nothing to do for the "available" case here.
-      // For manual checks where nothing's waiting after the poll window,
-      // confirm the up-to-date state explicitly.
-      if (manual && !reg.waiting) {
+      // If a worker is currently installing, wait for it to actually
+      // finish before deciding. Polling for a few seconds (the old
+      // approach) wasn't long enough for real installs — we'd declare
+      // "up to date" prematurely, then vite-plugin-pwa's needRefresh
+      // would fire a moment later and pop the "available" dialog
+      // immediately after. Listening for statechange resolves the moment
+      // the new worker hits "installed" (== now waiting).
+      if (reg.installing) {
+        const sw = reg.installing
+        const deadlineMs = manual ? 12000 : 30000
+        await new Promise<void>((resolve) => {
+          let timer: ReturnType<typeof setTimeout> | null = null
+          const cleanup = () => {
+            sw.removeEventListener("statechange", onChange)
+            if (timer) clearTimeout(timer)
+          }
+          const onChange = () => {
+            if (
+              sw.state === "installed" ||
+              sw.state === "activated" ||
+              sw.state === "redundant"
+            ) {
+              cleanup()
+              resolve()
+            }
+          }
+          sw.addEventListener("statechange", onChange)
+          timer = setTimeout(() => { cleanup(); resolve() }, deadlineMs)
+        })
+      }
+      if (reg.waiting) {
+        setResult("available")
+      } else if (manual) {
         setResult("up-to-date")
       }
     } catch {
@@ -98,7 +119,6 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
       }
       if (cancelled) return
       await runCheck(false)
-      setTimeout(() => { if (!cancelled) runCheck(false) }, 3000)
     }
     initial()
 
@@ -107,8 +127,18 @@ export function SwUpdateProvider({ children }: { children: React.ReactNode }) {
     }
     document.addEventListener("visibilitychange", onVis)
     window.addEventListener("focus", onVis)
+
+    // Periodic check while the app is foregrounded. Without this, a build
+    // deployed mid-session never surfaces until the user backgrounds the
+    // app or manually clicks "Check for updates" — runCheck's own
+    // 5-minute debounce makes this safe to fire on every interval tick.
+    const intervalId = setInterval(() => {
+      if (!document.hidden) runCheck(false)
+    }, AUTO_CHECK_MIN_INTERVAL_MS)
+
     return () => {
       cancelled = true
+      clearInterval(intervalId)
       document.removeEventListener("visibilitychange", onVis)
       window.removeEventListener("focus", onVis)
     }
