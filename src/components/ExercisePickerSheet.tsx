@@ -429,11 +429,11 @@ export function ExercisePickerSheet({
           )}
 
           {(!loading || multi) && (
-            <div className="sticky bottom-0 -mx-5 -mb-5 mt-2 flex flex-col gap-2 border-t border-border/60 bg-card/95 px-5 py-3 backdrop-blur">
+            <div className="sticky bottom-0 -mx-5 -mb-5 mt-2 flex flex-col gap-2 bg-card px-5 py-3 shadow-[0_-6px_20px_-12px_rgba(15,23,42,0.12)]">
               {!loading && (
                 <button
                   onClick={startCreate}
-                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card/60 py-2.5 text-xs font-semibold text-muted-foreground hover:bg-card hover:text-foreground"
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-transparent py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
                 >
                   <Plus className="h-3.5 w-3.5" /> New exercise
                 </button>
