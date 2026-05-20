@@ -1243,6 +1243,49 @@ function patchSetInActive(
   }))
 }
 
+// Apply a transform to a specific workout across every cache that might
+// contain it: the active session, the by-id detail cache, and every
+// weekly:* / recent:* list cache currently in memory. Returning `null`
+// from the transform removes the workout from the list caches and clears
+// the active/by-id caches. Used by mutations that affect finished workouts
+// (discardWorkout, updateWorkoutTitle), which would otherwise leave the
+// History list and detail sheet showing stale data offline — the old
+// optimistic patch only updated the "active" cache, which never holds a
+// finished workout.
+async function patchWorkoutInAllCaches(
+  userId: string | null,
+  workoutId: string,
+  transform: (w: Workout) => Workout | null,
+): Promise<void> {
+  await patchCache<Workout | null>(userId, "active", (prev) => {
+    if (!prev || prev.id !== workoutId) return prev ?? null
+    return transform(prev) ?? null
+  })
+  await patchCache<Workout | null>(userId, `workout:${workoutId}`, (prev) => {
+    if (!prev) return null
+    return transform(prev) ?? null
+  })
+  for (const key of Array.from(memCache.keys())) {
+    if (!key.startsWith("weekly:") && !key.startsWith("recent:")) continue
+    const list = memCache.get(key)
+    if (!Array.isArray(list)) continue
+    if (!(list as Workout[]).some((w) => w.id === workoutId)) continue
+    await patchCache<Workout[]>(userId, key, (prev) => {
+      if (!prev) return []
+      const out: Workout[] = []
+      for (const w of prev) {
+        if (w.id === workoutId) {
+          const tw = transform(w)
+          if (tw) out.push(tw)
+        } else {
+          out.push(w)
+        }
+      }
+      return out
+    })
+  }
+}
+
 // Best-effort: many mutation entry points don't have direct access to the
 // current user id without going through useAuth (which is a React hook). For
 // helpers called from non-hook code, we extract the user from the session
@@ -1610,9 +1653,7 @@ export async function removeExerciseFromWorkout(workoutExerciseId: string) {
 
 export async function discardWorkout(workoutId: string) {
   const userId = await activeUserId()
-  await patchCache<Workout | null>(userId, "active", (prev) =>
-    prev?.id === workoutId ? null : prev ?? null,
-  )
+  await patchWorkoutInAllCaches(userId, workoutId, () => null)
   await runMutation("discardWorkout", { workoutId })
 }
 
@@ -1620,9 +1661,7 @@ export async function updateWorkoutTitle(workoutId: string, title: string) {
   const trimmed = title.trim()
   if (!trimmed) throw new Error("Title required")
   const userId = await activeUserId()
-  await patchActiveWorkout(userId, (w) =>
-    w.id === workoutId ? { ...w, title: trimmed } : w,
-  )
+  await patchWorkoutInAllCaches(userId, workoutId, (w) => ({ ...w, title: trimmed }))
   await runMutation("updateWorkoutTitle", { workoutId, title: trimmed })
 }
 
