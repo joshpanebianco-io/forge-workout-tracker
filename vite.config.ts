@@ -41,23 +41,19 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
-            // Supabase REST/Postgrest GETs — primary read path. Network-first
-            // so the user gets fresh data when online but never sees a
-            // failure when briefly offline (cache served instead).
+            // Supabase REST/Postgrest GETs — always go to network. Offline
+            // reads are handled by the app-level IndexedDB cache in
+            // src/lib/cache.ts (gated by isOnline() in useAsync), so a SW
+            // cache layer here is redundant and dangerous: a slow first
+            // request after reconnect would time out and the SW would
+            // serve a stale pre-mutation snapshot, overwriting any
+            // optimistic patch (e.g. a freshly-finished workout would
+            // vanish from History again).
             urlPattern: ({ url, request }) =>
               request.method === 'GET' &&
               /\.supabase\.co$/i.test(url.hostname) &&
               (url.pathname.startsWith('/rest/') || url.pathname.startsWith('/storage/')),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-api',
-              networkTimeoutSeconds: 6,
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 30 * 24 * 60 * 60, // 30d
-              },
-              cacheableResponse: { statuses: [0, 200] },
-            },
+            handler: 'NetworkOnly',
           },
           {
             // Auth endpoints — never cache. We use NetworkOnly so a stale
