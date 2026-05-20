@@ -1271,12 +1271,49 @@ export async function addSet(
 
 export async function finishWorkout(workoutId: string, durationMin: number) {
   const userId = await activeUserId()
-  // Clear the active-workout cache so the home screen no longer renders the
-  // session that's now wrapping up. The "recent" list will naturally pick
-  // up the finished workout on its next revalidation.
+
+  // Snapshot the active workout's full state BEFORE we clear "active". We
+  // need its exercises/sets to populate the weekly + recent caches so the
+  // finished session shows up in History (filters by durationMin > 0) the
+  // moment we tap "Finish" — without waiting for a server refetch that
+  // (a) doesn't run while offline and (b) can race the queue drain on
+  // reconnect, returning a pre-finish snapshot that overwrites the patch.
+  const activeBefore =
+    (memCache.get("active") as Workout | null | undefined) ??
+    (await readCache<Workout | null>(userId, "active")) ??
+    null
+
   await patchCache<Workout | null>(userId, "active", (prev) =>
     prev?.id === workoutId ? null : prev ?? null,
   )
+
+  if (activeBefore && activeBefore.id === workoutId) {
+    const finished: Workout = { ...activeBefore, durationMin }
+    const weekStartIso = startOfWeek(new Date(activeBefore.date)).toISOString()
+
+    await patchCache<Workout[]>(userId, `weekly:${weekStartIso}`, (prev) => {
+      const list = prev ?? []
+      const idx = list.findIndex((w) => w.id === workoutId)
+      if (idx >= 0) {
+        const copy = list.slice()
+        copy[idx] = finished
+        return copy
+      }
+      return [finished, ...list]
+    })
+
+    await patchCache<Workout[]>(userId, "recent:20", (prev) => {
+      const list = prev ?? []
+      const idx = list.findIndex((w) => w.id === workoutId)
+      if (idx >= 0) {
+        const copy = list.slice()
+        copy[idx] = finished
+        return copy
+      }
+      return [finished, ...list].slice(0, 20)
+    })
+  }
+
   await runMutation("finishWorkout", {
     workoutId,
     durationMin,
