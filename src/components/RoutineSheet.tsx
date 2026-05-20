@@ -341,7 +341,7 @@ function SortableExerciseRow({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex items-center gap-2 p-3 touch-none",
+        "flex items-center gap-2 p-3",
         isDragging && "opacity-70 shadow-card"
       )}
     >
@@ -349,7 +349,10 @@ function SortableExerciseRow({
         type="button"
         {...attributes}
         {...listeners}
-        className="flex h-8 w-6 shrink-0 cursor-grab items-center justify-center text-muted-foreground hover:text-foreground active:cursor-grabbing"
+        // touch-none lives on the handle, not the whole card — otherwise
+        // any touch inside the row prevents native scrolling, so the list
+        // becomes un-scrollable when the user's finger lands on an item.
+        className="flex h-8 w-6 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground hover:text-foreground active:cursor-grabbing"
         aria-label="Drag to reorder"
       >
         <GripVertical className="h-4 w-4" />
