@@ -429,11 +429,17 @@ export function ExercisePickerSheet({
           )}
 
           {(!loading || multi) && (
-            <div className="sticky bottom-0 -mx-5 -mb-5 mt-2 flex flex-col gap-2 bg-card px-5 py-3 shadow-[0_-6px_20px_-12px_rgba(15,23,42,0.12)]">
+            <div className="sticky bottom-0 -mx-5 -mb-5 mt-2 flex flex-col gap-2 bg-secondary px-5 py-3">
+              {/* Soft fade above the bar so list content dissolves into it
+                  instead of being chopped off by a hard edge. */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-secondary to-transparent"
+              />
               {!loading && (
                 <button
                   onClick={startCreate}
-                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-transparent py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-transparent py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
                 >
                   <Plus className="h-3.5 w-3.5" /> New exercise
                 </button>
