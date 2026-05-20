@@ -5,7 +5,7 @@ import {
   addDays, startOfWeek, startOfMonth, startOfDay, localDayKey, localMonthKey,
 } from "./utils"
 import { readCache, writeCache, dropUserCache } from "./cache"
-import { drainQueue, runMutation } from "./mutation-queue"
+import { drainQueue, runMutation, subscribeQueueLength } from "./mutation-queue"
 import { isOnline, onNetworkChange } from "./network"
 import type {
   Exercise, ExerciseLog, MuscleGroup, PR, Routine, SetEntry, Workout,
@@ -161,6 +161,15 @@ if (typeof window !== "undefined") {
   })
 }
 
+// Module-level mirror of the mutation queue length. Reading it synchronously
+// in useAsync lets us skip the network fetch while writes are still draining
+// — otherwise a fetcher can race the queue and return a stale "row doesn't
+// exist yet" response that overwrites the optimistic cache patch.
+let currentQueueLen = 0
+if (typeof window !== "undefined") {
+  subscribeQueueLength((n) => { currentQueueLen = n })
+}
+
 function useRevalidationEpoch() {
   const [, set] = React.useState(revalidateEpoch)
   React.useEffect(() => {
@@ -224,12 +233,18 @@ function useAsync<T>(
       }).catch(() => { /* ignore */ })
     }
 
-    // Offline: don't run the fetcher. Workbox's NetworkFirst will serve a
-    // stale cached GET that would clobber any optimistic patches the user's
-    // mutations have made (e.g. a new exercise, a freshly started workout).
-    // Trust the mem/IDB cache layer instead — the reconnect pulse re-runs
-    // this effect with isOnline() === true once we're back.
-    if (!isOnline()) {
+    // Don't run the fetcher when:
+    //  (a) we're offline — the Workbox cache (or a raw fetch error) would
+    //      otherwise overwrite optimistic patches; or
+    //  (b) we have local data already AND there are queued writes pending —
+    //      the server doesn't have them yet, so a fetch would return a
+    //      pre-write snapshot (e.g. an offline-finished workout looks like
+    //      "not found", `null` overwrites the optimistic Workout, and the
+    //      detail sheet gets stuck on its loading state). pulseRevalidation
+    //      fires once the queue drains, re-runs this effect, and lets the
+    //      fetcher pick up the now-synced server state.
+    const queueBlocked = memHit !== undefined && currentQueueLen > 0
+    if (!isOnline() || queueBlocked) {
       networkSettled = true
       if (!settledRef.current) {
         if (memHit !== undefined) {
@@ -1312,6 +1327,17 @@ export async function finishWorkout(workoutId: string, durationMin: number) {
       }
       return [finished, ...list].slice(0, 20)
     })
+
+    // Populate the by-id cache that WorkoutDetailSheet reads from. Without
+    // this, tapping the workout in History mounts useWorkout(id) with no
+    // memHit, the fetcher returns null (server hasn't gotten the queued
+    // finish row yet, or we're offline), and the sheet renders its
+    // loading-or-empty placeholder forever.
+    await patchCache<Workout | null>(
+      userId,
+      `workout:${workoutId}`,
+      () => finished,
+    )
   }
 
   await runMutation("finishWorkout", {
