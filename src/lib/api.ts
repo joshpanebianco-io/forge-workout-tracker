@@ -5,7 +5,7 @@ import {
   addDays, startOfWeek, startOfMonth, startOfDay, localDayKey, localMonthKey,
 } from "./utils"
 import { readCache, writeCache, dropUserCache } from "./cache"
-import { runMutation } from "./mutation-queue"
+import { drainQueue, runMutation } from "./mutation-queue"
 import { isOnline, onNetworkChange } from "./network"
 import type {
   Exercise, ExerciseLog, MuscleGroup, PR, Routine, SetEntry, Workout,
@@ -147,12 +147,17 @@ function pulseRevalidation() {
 
 if (typeof window !== "undefined") {
   onNetworkChange((online) => {
-    if (online) {
-      // Defer past the queue-drain kickoff so we revalidate AFTER mutations
-      // have had a chance to land on the server. 500ms is generous; the
-      // important thing is ordering, not exact timing.
-      setTimeout(pulseRevalidation, 500)
-    }
+    if (!online) return
+    // Wait for the mutation queue to finish syncing before pulsing — a fixed
+    // delay races the drain on slow networks or long queues, and the
+    // resulting refetch returns server state from BEFORE the queued writes
+    // landed (e.g. a finished workout still missing from history because
+    // finishWorkout hadn't been replayed yet). drainQueue dedups concurrent
+    // callers via its internal drainPromise, so this cooperates safely with
+    // the queue's own onNetworkChange listener that also triggers a drain.
+    drainQueue()
+      .catch(() => { /* non-network errors are tracked per-entry */ })
+      .finally(() => pulseRevalidation())
   })
 }
 
