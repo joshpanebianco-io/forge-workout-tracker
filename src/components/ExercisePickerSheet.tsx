@@ -439,7 +439,7 @@ export function ExercisePickerSheet({
               {!loading && (
                 <button
                   onClick={startCreate}
-                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-transparent py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-muted-foreground/40 bg-transparent py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
                 >
                   <Plus className="h-3.5 w-3.5" /> New exercise
                 </button>
