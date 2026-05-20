@@ -31,13 +31,21 @@ const COLORS = [
   { id: "from-rose-500 to-pink-500", swatch: "from-rose-500 to-pink-500" },
 ]
 
+export type RoutineInitialDraft = {
+  name?: string
+  exercises: { exerciseId: string; sets: number; targetReps: string }[]
+}
+
 export function RoutineSheet({
-  open, onOpenChange, onSaved, routine,
+  open, onOpenChange, onSaved, routine, initialDraft,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   onSaved: () => void
   routine?: Routine | null
+  // Seeds fields when creating a new routine (no `routine` prop). Used to
+  // pre-fill the form from a completed empty workout via "Save as routine".
+  initialDraft?: RoutineInitialDraft
 }) {
   const { user } = useAuth()
   const { data: exercises, refetch: refetchExercises } = useExercises()
@@ -66,6 +74,12 @@ export function RoutineSheet({
       setSchedule(routine.schedule ?? "")
       setColor(routine.color)
       setItems(routine.exercises)
+    } else if (initialDraft) {
+      setName(initialDraft.name ?? "")
+      setDescription("")
+      setSchedule("")
+      setColor(COLORS[0].id)
+      setItems(initialDraft.exercises)
     } else {
       setName("")
       setDescription("")
@@ -74,7 +88,7 @@ export function RoutineSheet({
       setItems([])
     }
     setError(null)
-  }, [open, routine])
+  }, [open, routine, initialDraft])
 
   const lookup = (id: string) =>
     exercises.find((e) => e.id === id) ?? pickCache.get(id)

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Clock, Dumbbell, Flame, Trophy, Trash2, Loader2, Pencil } from "lucide-react"
+import { Clock, Dumbbell, Flame, Trophy, Trash2, Loader2, Pencil, BookmarkPlus } from "lucide-react"
 import { Sheet } from "@/components/ui/sheet"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -7,6 +7,12 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { useWorkout, discardWorkout } from "@/lib/api"
 import { WorkoutTitleEditSheet } from "@/components/WorkoutTitleEditSheet"
 import { relativeDay, formatTime } from "@/lib/utils"
+import type { RoutineInitialDraft } from "@/components/RoutineSheet"
+
+// @dnd-kit (~50KB gzip) only loads if the user actually opens "Save as routine".
+const RoutineSheet = React.lazy(() =>
+  import("@/components/RoutineSheet").then((m) => ({ default: m.RoutineSheet }))
+)
 
 export function WorkoutDetailSheet({
   workoutId, onOpenChange, onDeleted, onChanged,
@@ -22,14 +28,53 @@ export function WorkoutDetailSheet({
   const [deleting, setDeleting] = React.useState(false)
   const [deleteError, setDeleteError] = React.useState<string | null>(null)
   const [renameOpen, setRenameOpen] = React.useState(false)
+  const [saveRoutineOpen, setSaveRoutineOpen] = React.useState(false)
 
   React.useEffect(() => {
     if (!open) {
       setConfirmOpen(false)
       setDeleteError(null)
       setRenameOpen(false)
+      setSaveRoutineOpen(false)
     }
   }, [open])
+
+  // Workouts started from a routine carry a routineId; "empty" workouts
+  // don't. Only the latter get the "Save as routine" affordance — for
+  // routine-based sessions the user already has the routine to edit.
+  const canSaveAsRoutine = !!w && !w.routineId && w.exercises.length > 0
+
+  const routineDraft = React.useMemo<RoutineInitialDraft | undefined>(() => {
+    if (!w) return undefined
+    return {
+      name: w.title,
+      exercises: w.exercises.map((log) => {
+        // Pick the most common reps across done sets — falls back to any
+        // first set's reps, then to "8" so we always have a sensible target.
+        const counts = new Map<number, number>()
+        for (const s of log.sets) {
+          if (!s.done || s.reps <= 0) continue
+          counts.set(s.reps, (counts.get(s.reps) ?? 0) + 1)
+        }
+        let topReps = 0
+        let topCount = 0
+        for (const [reps, count] of counts) {
+          if (count > topCount || (count === topCount && reps > topReps)) {
+            topReps = reps
+            topCount = count
+          }
+        }
+        const fallbackReps = log.sets.find((s) => s.reps > 0)?.reps ?? 0
+        const reps = topReps || fallbackReps
+        const doneCount = log.sets.filter((s) => s.done).length
+        return {
+          exerciseId: log.exercise.id,
+          sets: doneCount > 0 ? doneCount : Math.max(1, log.sets.length),
+          targetReps: reps > 0 ? `${reps}` : "8",
+        }
+      }),
+    }
+  }, [w])
 
   const doDelete = async () => {
     if (!w) return
@@ -126,6 +171,16 @@ export function WorkoutDetailSheet({
             })}
           </div>
 
+          {canSaveAsRoutine && (
+            <button
+              onClick={() => setSaveRoutineOpen(true)}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-secondary/60 px-3 py-2.5 text-xs font-semibold text-foreground ring-inset-border transition-colors hover:bg-secondary"
+            >
+              <BookmarkPlus className="h-3.5 w-3.5" />
+              Save as routine
+            </button>
+          )}
+
           <button
             onClick={() => { setDeleteError(null); setConfirmOpen(true) }}
             disabled={deleting}
@@ -135,6 +190,17 @@ export function WorkoutDetailSheet({
             Delete workout
           </button>
         </div>
+      )}
+
+      {saveRoutineOpen && (
+        <React.Suspense fallback={null}>
+          <RoutineSheet
+            open={saveRoutineOpen}
+            onOpenChange={setSaveRoutineOpen}
+            initialDraft={routineDraft}
+            onSaved={() => setSaveRoutineOpen(false)}
+          />
+        </React.Suspense>
       )}
 
       {confirmOpen && (
