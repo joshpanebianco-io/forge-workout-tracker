@@ -351,8 +351,15 @@ function ActiveSession({
   const handlePickExercises = async (picked: Exercise[]) => {
     setPickerAdding(true)
     try {
+      // Use a local counter for position. React batches state updates across
+      // the awaits in this loop, so logsRef.current.length never increments
+      // between iterations — every exercise would get the same position
+      // and the UNIQUE(workout_id, position) constraint on workout_exercises
+      // would silently fail every insert after the first (catch swallows
+      // the error, the user sees a partial add).
+      let position = logsRef.current.length
       for (const ex of picked) {
-        const position = logsRef.current.length + 1
+        position += 1
         try {
           const { workoutExerciseId, initialSet } = await addExerciseToWorkout(
             workout.id,
