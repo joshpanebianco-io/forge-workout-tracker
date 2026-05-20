@@ -239,7 +239,7 @@ export function RoutineSheet({
           )}
 
           <div className="flex flex-col gap-2 pt-2">
-            <Button onClick={save} disabled={saving} size="lg">
+            <Button onClick={save} disabled={saving}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : isEdit ? "Save changes" : "Create routine"}
             </Button>
             {isEdit && (
