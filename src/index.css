@@ -114,6 +114,31 @@
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
   }
+
+  /* Portrait-lock fallback for iOS (manifest orientation is ignored there).
+     Hidden by default; shown only on phone-sized viewports in landscape. */
+  .rotate-prompt { display: none; }
+
+  @media (orientation: landscape) and (max-height: 500px) {
+    .rotate-prompt {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: hsl(var(--app-bg));
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    .rotate-prompt-icon {
+      animation: rotate-hint 2.4s ease-in-out infinite;
+    }
+  }
+
+  @keyframes rotate-hint {
+    0%, 100% { transform: rotate(-90deg); }
+    50%      { transform: rotate(0deg); }
+  }
 }
 
 .recharts-wrapper :focus,

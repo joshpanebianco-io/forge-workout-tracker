@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from "react"
 import { Loader2 } from "lucide-react"
 import { AppShell } from "@/components/AppShell"
+import { RotatePrompt } from "@/components/RotatePrompt"
 import type { Tab } from "@/components/BottomNav"
 import { Home } from "@/screens/Home"
 import { Workout } from "@/screens/Workout"
@@ -50,6 +51,7 @@ export default function App() {
 
   return (
     <SwUpdateProvider>
+      <RotatePrompt />
       {!session ? (
         <Suspense fallback={<ScreenFallback />}>
           <Login />
