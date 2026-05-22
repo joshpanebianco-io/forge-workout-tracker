@@ -123,6 +123,7 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
   )
 
   const startRest = React.useCallback((seconds: number) => {
+    primeAudio()
     const ms = Math.max(1, Math.round(seconds)) * 1000
     setState((s) => ({
       ...s,
@@ -225,4 +226,53 @@ function fireRestComplete() {
   if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
     try { navigator.vibrate([200, 80, 200]) } catch { /* no-op */ }
   }
+  playChime()
+}
+
+// Lazily-created AudioContext, primed on first user gesture (startRest) so
+// iOS Safari allows playback when the timer later fires from a setTimeout.
+let audioCtx: AudioContext | null = null
+
+function getAudioCtx(): AudioContext | null {
+  if (typeof window === "undefined") return null
+  const Ctor: typeof AudioContext | undefined =
+    window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Ctor) return null
+  if (!audioCtx) {
+    try { audioCtx = new Ctor() } catch { return null }
+  }
+  return audioCtx
+}
+
+function primeAudio() {
+  const ctx = getAudioCtx()
+  if (!ctx) return
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => { /* no-op */ })
+  }
+}
+
+function playChime() {
+  const ctx = getAudioCtx()
+  if (!ctx) return
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => { /* no-op */ })
+  }
+  const now = ctx.currentTime
+  // Two-note ascending chime: E5 → B5, sine waves with quick attack + decay.
+  playTone(ctx, 659.25, now, 0.22)
+  playTone(ctx, 987.77, now + 0.14, 0.32)
+}
+
+function playTone(ctx: AudioContext, freq: number, start: number, dur: number) {
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  osc.type = "sine"
+  osc.frequency.value = freq
+  gain.gain.setValueAtTime(0.0001, start)
+  gain.gain.exponentialRampToValueAtTime(0.18, start + 0.015)
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + dur)
+  osc.connect(gain).connect(ctx.destination)
+  osc.start(start)
+  osc.stop(start + dur + 0.02)
 }
