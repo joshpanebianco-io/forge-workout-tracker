@@ -25,7 +25,16 @@ function load(): Persisted {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return empty
     const parsed = JSON.parse(raw)
-    return { ...empty, ...parsed }
+    const merged: Persisted = { ...empty, ...parsed }
+    // If the rest timer already expired while the app was suspended /
+    // killed, clear it before first render so the stale countdown never
+    // paints on resume.
+    if (merged.restEndsAt != null && Date.now() >= merged.restEndsAt) {
+      merged.restEndsAt = null
+      merged.restDurationMs = null
+      merged.restNotified = true
+    }
+    return merged
   } catch {
     return empty
   }
@@ -82,7 +91,13 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
     if (state.restNotified) return
     const endsAt = state.restEndsAt
     const trigger = (vibrate: boolean) => {
-      if (vibrate) fireRestComplete()
+      // Suppress chime + vibrate when the app isn't actually visible. iOS
+      // can fire the setTimeout in the background AND queue AudioContext
+      // tones that then play on resume, so a drift check alone isn't
+      // enough — we must also confirm the user is looking at the app.
+      const visible =
+        typeof document === "undefined" || document.visibilityState === "visible"
+      if (vibrate && visible) fireRestComplete()
       setState((s) => ({
         ...s,
         restEndsAt: null,
@@ -106,6 +121,24 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
     }, remaining)
     return () => clearTimeout(t)
   }, [state.restEndsAt, state.restNotified])
+
+  // On returning to the foreground, synchronously clear an expired rest
+  // timer so the stale countdown card stops rendering immediately —
+  // otherwise we'd wait for the queued setTimeout to fire and the user
+  // sees the snapshot countdown briefly before React reconciles.
+  React.useEffect(() => {
+    if (typeof document === "undefined") return
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return
+      setState((s) => {
+        if (s.restEndsAt == null || s.restNotified) return s
+        if (Date.now() < s.restEndsAt) return s
+        return { ...s, restEndsAt: null, restDurationMs: null, restNotified: true }
+      })
+    }
+    document.addEventListener("visibilitychange", onVis)
+    return () => document.removeEventListener("visibilitychange", onVis)
+  }, [])
 
   const syncWorkout = React.useCallback(
     (workoutId: string | null, knownExerciseIds: string[]) => {
