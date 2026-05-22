@@ -74,14 +74,10 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
     return () => clearTimeout(t)
   }, [state])
 
-  // Flush on hide so we don't lose the latest state if the app is suspended
-  // before the debounce fires.
-  React.useEffect(() => {
-    if (typeof document === "undefined") return
-    const flush = () => { if (document.visibilityState === "hidden") save(state) }
-    document.addEventListener("visibilitychange", flush)
-    return () => document.removeEventListener("visibilitychange", flush)
-  }, [state])
+  // Keep latest state available to event handlers without re-binding listeners
+  // on every state change.
+  const stateRef = React.useRef(state)
+  stateRef.current = state
 
   // Vibrate + auto-dismiss when rest timer crosses zero. Only fires once per
   // rest period (restNotified gate). Survives nav because state is restored
@@ -122,14 +118,19 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
     return () => clearTimeout(t)
   }, [state.restEndsAt, state.restNotified])
 
-  // On returning to the foreground, synchronously clear an expired rest
-  // timer so the stale countdown card stops rendering immediately —
-  // otherwise we'd wait for the queued setTimeout to fire and the user
-  // sees the snapshot countdown briefly before React reconciles.
+  // Single visibility handler: on hide we flush state to localStorage and
+  // suspend the AudioContext so the audio hardware can power down. On show
+  // we synchronously clear an expired rest timer so the stale countdown
+  // card stops rendering immediately — otherwise we'd wait for the queued
+  // setTimeout to fire and the user sees the snapshot countdown briefly.
   React.useEffect(() => {
     if (typeof document === "undefined") return
     const onVis = () => {
-      if (document.visibilityState !== "visible") return
+      if (document.visibilityState === "hidden") {
+        save(stateRef.current)
+        suspendAudio()
+        return
+      }
       setState((s) => {
         if (s.restEndsAt == null || s.restNotified) return s
         if (Date.now() < s.restEndsAt) return s
@@ -302,6 +303,15 @@ function playChime() {
   // Two-note ascending chime: E5 → B5, sine waves with quick attack + decay.
   playTone(ctx, 659.25, now, 0.22)
   playTone(ctx, 987.77, now + 0.14, 0.32)
+  // Suspend once tones have decayed so iOS can power the audio HW back down.
+  // Without this the context stays "running" for the rest of the session.
+  window.setTimeout(suspendAudio, 600)
+}
+
+function suspendAudio() {
+  if (audioCtx && audioCtx.state === "running") {
+    audioCtx.suspend().catch(() => { /* no-op */ })
+  }
 }
 
 function playTone(ctx: AudioContext, freq: number, start: number, dur: number) {
