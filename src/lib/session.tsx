@@ -80,6 +80,7 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
   React.useEffect(() => {
     if (state.restEndsAt == null) return
     if (state.restNotified) return
+    const endsAt = state.restEndsAt
     const trigger = (vibrate: boolean) => {
       if (vibrate) fireRestComplete()
       setState((s) => ({
@@ -89,14 +90,20 @@ export function WorkoutSessionProvider({ children }: { children: React.ReactNode
         restNotified: true,
       }))
     }
-    const remaining = state.restEndsAt - Date.now()
+    // If the timer already expired before this effect runs, the user wasn't
+    // in the app when it ended — clear silently rather than chime on return.
+    const remaining = endsAt - Date.now()
     if (remaining <= 0) {
-      // App was likely closed during/after the rest. Only vibrate if we
-      // missed the buzzer by a small margin; otherwise just clear silently.
-      trigger(remaining > -5_000)
+      trigger(false)
       return
     }
-    const t = setTimeout(() => trigger(true), remaining)
+    // setTimeout can fire late if the tab was backgrounded mid-rest. Only
+    // chime if we're firing within ~1s of the true end; otherwise the user
+    // re-opened the app well after the rest expired.
+    const t = setTimeout(() => {
+      const drift = Date.now() - endsAt
+      trigger(drift < 1_000)
+    }, remaining)
     return () => clearTimeout(t)
   }, [state.restEndsAt, state.restNotified])
 
