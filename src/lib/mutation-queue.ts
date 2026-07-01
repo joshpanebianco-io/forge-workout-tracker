@@ -58,10 +58,33 @@ let memQueue: QueueEntry[] | null = null
 let queueLoadPromise: Promise<QueueEntry[]> | null = null
 let drainPromise: Promise<void> | null = null
 const queueListeners = new Set<(len: number) => void>()
+// Fired once each time a drain cycle finishes (queue emptied or stopped on a
+// network error). Lets the data layer pulse revalidation so mounted hooks pick
+// up whatever the queue just synced — on reconnect, cold-start replay, or a
+// foreground write that flushed queued predecessors first.
+const drainCompleteListeners = new Set<() => void>()
 
 function notifyQueueChanged() {
   const len = memQueue?.length ?? 0
   queueListeners.forEach((l) => l(len))
+}
+
+function notifyDrainComplete() {
+  drainCompleteListeners.forEach((cb) => {
+    try { cb() } catch { /* ignore */ }
+  })
+}
+
+// Count of direct (online, non-queued) writes currently in flight. The data
+// layer treats these like a non-empty queue when deciding whether to run a
+// background refetch — a fetch started while a write is mid-round-trip can
+// return a pre-write snapshot and clobber the just-applied optimistic state
+// (e.g. a tab remount racing a set toggle).
+let pendingWrites = 0
+const pendingWritesListeners = new Set<(n: number) => void>()
+
+function notifyPendingWrites() {
+  pendingWritesListeners.forEach((l) => l(pendingWrites))
 }
 
 async function loadQueue(): Promise<QueueEntry[]> {
@@ -386,6 +409,23 @@ export async function runMutation(
     await enqueue(kind, payload)
     return
   }
+  // Preserve causal FIFO order. If writes are already queued (e.g. an earlier
+  // one hit a transient network error while navigator stayed "online"), flush
+  // them before running this one directly — otherwise this mutation could
+  // reach the server ahead of a predecessor it depends on (e.g. an addSet
+  // landing before the addExerciseToWorkout that creates its parent row).
+  if ((await getQueueLength()) > 0) {
+    await drainQueue()
+    if ((await getQueueLength()) > 0) {
+      // Drain couldn't fully flush (a predecessor is still failing on the
+      // network, or we just went offline). Queue this one too so ordering is
+      // preserved rather than racing ahead of the backlog.
+      await enqueue(kind, payload)
+      return
+    }
+  }
+  pendingWrites++
+  notifyPendingWrites()
   try {
     await executeMutation(kind, payload)
   } catch (e) {
@@ -394,6 +434,9 @@ export async function runMutation(
       return
     }
     throw e
+  } finally {
+    pendingWrites--
+    notifyPendingWrites()
   }
 }
 
@@ -402,6 +445,7 @@ export async function runMutation(
 // resumes when the network comes back.
 export async function drainQueue(): Promise<void> {
   if (drainPromise) return drainPromise
+  let processedAny = false
   drainPromise = (async () => {
     const q = await loadQueue()
     while (q.length > 0 && isOnline()) {
@@ -411,6 +455,7 @@ export async function drainQueue(): Promise<void> {
         q.shift()
         await persistQueue()
         notifyQueueChanged()
+        processedAny = true
       } catch (e) {
         entry.attempts++
         entry.lastError = (e as { message?: string })?.message ?? String(e)
@@ -423,6 +468,7 @@ export async function drainQueue(): Promise<void> {
         // block everything behind it forever.
         if (entry.attempts >= MAX_ATTEMPTS) {
           q.shift()
+          processedAny = true
         }
         await persistQueue()
         notifyQueueChanged()
@@ -434,6 +480,11 @@ export async function drainQueue(): Promise<void> {
   } finally {
     drainPromise = null
   }
+  // Signal only when the cycle actually changed server state (synced or dropped
+  // an entry) — an empty-queue drain (e.g. the cold-start tick) shouldn't force
+  // a redundant refetch. Only the initiating caller reaches here; concurrent
+  // callers returned the shared drainPromise above.
+  if (processedAny) notifyDrainComplete()
 }
 
 export async function getQueueLength(): Promise<number> {
@@ -446,6 +497,20 @@ export function subscribeQueueLength(cb: (n: number) => void): () => void {
   // Fire current value once on subscribe
   loadQueue().then((q) => cb(q.length)).catch(() => {})
   return () => { queueListeners.delete(cb) }
+}
+
+// Count of direct online writes currently in flight (see pendingWrites above).
+export function subscribePendingWrites(cb: (n: number) => void): () => void {
+  pendingWritesListeners.add(cb)
+  cb(pendingWrites)
+  return () => { pendingWritesListeners.delete(cb) }
+}
+
+// Subscribe to "the queue just finished draining" events. The data layer uses
+// this to pulse revalidation so hooks refetch server state synced by the drain.
+export function onDrainComplete(cb: () => void): () => void {
+  drainCompleteListeners.add(cb)
+  return () => { drainCompleteListeners.delete(cb) }
 }
 
 export async function clearQueue(): Promise<void> {

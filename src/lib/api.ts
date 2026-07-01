@@ -5,8 +5,10 @@ import {
   addDays, startOfWeek, startOfMonth, startOfDay, localDayKey, localMonthKey,
 } from "./utils"
 import { readCache, writeCache, dropUserCache } from "./cache"
-import { drainQueue, runMutation, subscribeQueueLength } from "./mutation-queue"
-import { isOnline, onNetworkChange } from "./network"
+import {
+  runMutation, subscribeQueueLength, subscribePendingWrites, onDrainComplete,
+} from "./mutation-queue"
+import { isOnline } from "./network"
 import type {
   Exercise, ExerciseLog, MuscleGroup, PR, Routine, SetEntry, Workout,
 } from "./types"
@@ -146,19 +148,14 @@ function pulseRevalidation() {
 }
 
 if (typeof window !== "undefined") {
-  onNetworkChange((online) => {
-    if (!online) return
-    // Wait for the mutation queue to finish syncing before pulsing — a fixed
-    // delay races the drain on slow networks or long queues, and the
-    // resulting refetch returns server state from BEFORE the queued writes
-    // landed (e.g. a finished workout still missing from history because
-    // finishWorkout hadn't been replayed yet). drainQueue dedups concurrent
-    // callers via its internal drainPromise, so this cooperates safely with
-    // the queue's own onNetworkChange listener that also triggers a drain.
-    drainQueue()
-      .catch(() => { /* non-network errors are tracked per-entry */ })
-      .finally(() => pulseRevalidation())
-  })
+  // Pulse revalidation every time the mutation queue finishes draining, so
+  // mounted hooks refetch the freshly-synced server state instead of a
+  // pre-drain snapshot. This fires for ALL drain triggers — reconnect (the
+  // queue's own onNetworkChange handler), the cold-start replay, and a
+  // foreground write that flushed queued predecessors — not just reconnect.
+  // Waiting for the drain (rather than a fixed delay) means the refetch never
+  // races ahead of the writes it's meant to observe.
+  onDrainComplete(() => pulseRevalidation())
 }
 
 // Module-level mirror of the mutation queue length. Reading it synchronously
@@ -166,8 +163,10 @@ if (typeof window !== "undefined") {
 // — otherwise a fetcher can race the queue and return a stale "row doesn't
 // exist yet" response that overwrites the optimistic cache patch.
 let currentQueueLen = 0
+let currentPendingWrites = 0
 if (typeof window !== "undefined") {
   subscribeQueueLength((n) => { currentQueueLen = n })
+  subscribePendingWrites((n) => { currentPendingWrites = n })
 }
 
 function useRevalidationEpoch() {
@@ -243,7 +242,12 @@ function useAsync<T>(
     //      detail sheet gets stuck on its loading state). pulseRevalidation
     //      fires once the queue drains, re-runs this effect, and lets the
     //      fetcher pick up the now-synced server state.
-    const queueBlocked = memHit !== undefined && currentQueueLen > 0
+    //  (c) a direct online write is mid-round-trip — a fetch that starts now
+    //      could return a pre-write snapshot and clobber the optimistic value
+    //      we just applied (e.g. a tab remount racing a set toggle). The
+    //      optimistic cache is already correct, so skipping the fetch is safe.
+    const queueBlocked =
+      memHit !== undefined && (currentQueueLen > 0 || currentPendingWrites > 0)
     if (!isOnline() || queueBlocked) {
       networkSettled = true
       if (!settledRef.current) {
@@ -355,7 +359,7 @@ export function useRoutines() {
     const { data, error } = await supabase
       .from("routines")
       .select(`
-        id, name, description, schedule, color,
+        id, name, description, schedule, color, position,
         routine_exercises ( exercise_id, position, target_sets, target_reps )
       `)
       .order("position", { ascending: true })
@@ -366,6 +370,7 @@ export function useRoutines() {
       description: r.description ?? "",
       schedule: r.schedule ?? "",
       color: r.color ?? "from-blue-500 to-indigo-500",
+      position: r.position ?? undefined,
       exercises: (r.routine_exercises ?? [])
         .sort((a: any, b: any) => a.position - b.position)
         .map((re: any) => ({
@@ -394,6 +399,7 @@ function rowToWorkout(w: any, overrides?: Map<string, string>): Workout {
     .sort((a: any, b: any) => a.position - b.position)
     .map((we: any) => ({
       id: we.id,
+      position: we.position,
       notes: we.notes ?? undefined,
       exercise: rowToExercise(we.exercises, overrides),
       sets: (we.sets ?? [])
@@ -401,6 +407,7 @@ function rowToWorkout(w: any, overrides?: Map<string, string>): Workout {
         .map(
           (s: any): SetEntry => ({
             id: s.id,
+            setNumber: s.set_number,
             weight: Number(s.weight_kg),
             reps: s.reps,
             rest: s.rest_seconds ?? undefined,
@@ -1296,10 +1303,31 @@ async function activeUserId(): Promise<string | null> {
   return data.session?.user.id ?? null
 }
 
+// Snapshot of the current "active" workout cache (mem, falling back to IDB).
+// Captured before an optimistic patch so it can be restored verbatim if the
+// mutation is rejected — patchActiveWorkout builds new objects immutably, so
+// this reference stays pinned to the pre-patch state.
+async function readActive(userId: string | null): Promise<Workout | null> {
+  return (
+    (memCache.get("active") as Workout | null | undefined) ??
+    (await readCache<Workout | null>(userId, "active")) ??
+    null
+  )
+}
+
 export async function toggleSetDone(setId: string, done: boolean) {
   const userId = await activeUserId()
+  const before = await readActive(userId)
   await patchSetInActive(userId, setId, (s) => ({ ...s, done }))
-  await runMutation("toggleSetDone", { setId, done })
+  try {
+    await runMutation("toggleSetDone", { setId, done })
+  } catch (e) {
+    // Restore the pre-toggle cache so a rejected write doesn't leave the
+    // "active" cache (and, via finishWorkout's snapshot, History) showing a
+    // done state the server never accepted.
+    await patchCache<Workout | null>(userId, "active", () => before)
+    throw e
+  }
 }
 
 export async function addSet(
@@ -1313,7 +1341,7 @@ export async function addSet(
   const rest = prev?.rest ?? null
   const userId = await activeUserId()
   const newSet: SetEntry = {
-    id, weight, reps, rest: rest ?? undefined, done: false,
+    id, setNumber, weight, reps, rest: rest ?? undefined, done: false,
   }
   await patchActiveWorkout(userId, (w) => ({
     ...w,
@@ -1321,9 +1349,24 @@ export async function addSet(
       e.id === workoutExerciseId ? { ...e, sets: [...e.sets, newSet] } : e,
     ),
   }))
-  await runMutation("addSet", {
-    id, workoutExerciseId, setNumber, weight, reps, rest,
-  })
+  try {
+    await runMutation("addSet", {
+      id, workoutExerciseId, setNumber, weight, reps, rest,
+    })
+  } catch (e) {
+    // Roll back the optimistic patch so a rejected insert (e.g. a constraint
+    // violation) doesn't leave a phantom set in the mem+IDB cache that would
+    // resurface as the source of truth on the next tab remount.
+    await patchActiveWorkout(userId, (w) => ({
+      ...w,
+      exercises: w.exercises.map((e) =>
+        e.id === workoutExerciseId
+          ? { ...e, sets: e.sets.filter((s) => s.id !== id) }
+          : e,
+      ),
+    }))
+    throw e
+  }
   return newSet
 }
 
@@ -1490,9 +1533,11 @@ export async function startWorkoutFromRoutine(routineId: string, userId: string)
     }
     return {
       id: we.workoutExerciseId,
+      position: we.position,
       exercise: ex,
       sets: we.sets.map((s) => ({
         id: s.id,
+        setNumber: s.setNumber,
         weight: s.weight,
         reps: s.reps,
         rest: s.rest ?? undefined,
@@ -1563,17 +1608,24 @@ export async function updateSet(
   if (patch.rest !== undefined) dbPatch.rest_seconds = patch.rest
 
   const userId = await activeUserId()
+  const before = await readActive(userId)
   await patchSetInActive(userId, setId, (s) => ({
     ...s,
     weight: patch.weight ?? s.weight,
     reps: patch.reps ?? s.reps,
     rest: patch.rest === undefined ? s.rest : (patch.rest ?? undefined),
   }))
-  await runMutation("updateSet", { setId, patch: dbPatch })
+  try {
+    await runMutation("updateSet", { setId, patch: dbPatch })
+  } catch (e) {
+    await patchCache<Workout | null>(userId, "active", () => before)
+    throw e
+  }
 }
 
 export async function deleteSet(setId: string) {
   const userId = await activeUserId()
+  const before = await readActive(userId)
   await patchActiveWorkout(userId, (w) => ({
     ...w,
     exercises: w.exercises.map((e) => ({
@@ -1581,7 +1633,12 @@ export async function deleteSet(setId: string) {
       sets: e.sets.filter((s) => s.id !== setId),
     })),
   }))
-  await runMutation("deleteSet", { setId })
+  try {
+    await runMutation("deleteSet", { setId })
+  } catch (e) {
+    await patchCache<Workout | null>(userId, "active", () => before)
+    throw e
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -1612,6 +1669,7 @@ export async function addExerciseToWorkout(
   }
   const initialSet: SetEntry = {
     id: initialSetId,
+    setNumber: 1,
     weight: prefill.weight,
     reps: prefill.reps,
     rest: prefill.rest ?? undefined,
@@ -1623,32 +1681,50 @@ export async function addExerciseToWorkout(
           ...w,
           exercises: [
             ...w.exercises,
-            { id: workoutExerciseId, exercise, sets: [initialSet] },
+            { id: workoutExerciseId, position, exercise, sets: [initialSet] },
           ],
         }
       : w,
   )
 
-  await runMutation("addExerciseToWorkout", {
-    workoutId,
-    workoutExerciseId,
-    exerciseId,
-    position,
-    initialSetId,
-    initialWeight: prefill.weight,
-    initialReps: prefill.reps,
-    initialRest: prefill.rest,
-  })
+  try {
+    await runMutation("addExerciseToWorkout", {
+      workoutId,
+      workoutExerciseId,
+      exerciseId,
+      position,
+      initialSetId,
+      initialWeight: prefill.weight,
+      initialReps: prefill.reps,
+      initialRest: prefill.rest,
+    })
+  } catch (e) {
+    // Roll back the optimistic append so a rejected insert (e.g. a
+    // UNIQUE(workout_id, position) violation) doesn't strand a phantom
+    // exercise — and its un-insertable sets — in the mem+IDB cache.
+    await patchActiveWorkout(userId, (w) =>
+      w.id === workoutId
+        ? { ...w, exercises: w.exercises.filter((ex) => ex.id !== workoutExerciseId) }
+        : w,
+    )
+    throw e
+  }
   return { workoutExerciseId, initialSet }
 }
 
 export async function removeExerciseFromWorkout(workoutExerciseId: string) {
   const userId = await activeUserId()
+  const before = await readActive(userId)
   await patchActiveWorkout(userId, (w) => ({
     ...w,
     exercises: w.exercises.filter((e) => e.id !== workoutExerciseId),
   }))
-  await runMutation("removeExerciseFromWorkout", { workoutExerciseId })
+  try {
+    await runMutation("removeExerciseFromWorkout", { workoutExerciseId })
+  } catch (e) {
+    await patchCache<Workout | null>(userId, "active", () => before)
+    throw e
+  }
 }
 
 export async function discardWorkout(workoutId: string) {
@@ -1752,7 +1828,10 @@ export async function createRoutine(userId: string, draft: RoutineDraft) {
   const cached = (memCache.get("routines") as Routine[] | undefined)
     ?? await readCache<Routine[]>(userId, "routines")
     ?? []
-  const position = cached.length + 1
+  // max(position)+1, NOT length+1 — deleting a non-last routine leaves a gap
+  // below the max, so length+1 would collide with the surviving top routine
+  // and trip UNIQUE(user_id, position).
+  const position = cached.reduce((m, r) => Math.max(m, r.position ?? 0), 0) + 1
 
   const newRoutine: Routine = {
     id,
@@ -1760,6 +1839,7 @@ export async function createRoutine(userId: string, draft: RoutineDraft) {
     description: draft.description ?? "",
     schedule: draft.schedule ?? "",
     color: draft.color,
+    position,
     exercises: draft.exercises.map((re) => ({
       exerciseId: re.exerciseId,
       sets: re.sets,

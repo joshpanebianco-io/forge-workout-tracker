@@ -2,7 +2,10 @@ import { idbGet, idbSet, idbDel, idbDelPrefix } from "./idb"
 
 // Bump when the on-disk shape of any cached payload changes in a
 // non-backwards-compatible way. All existing cache entries become invalid.
-const CACHE_VERSION = 1
+// v2: SetEntry gained `setNumber` and ExerciseLog/Routine gained `position`
+// (server ordering keys). Old entries lack them, so they must not be reused —
+// the next-number math would otherwise read undefined and mis-key inserts.
+const CACHE_VERSION = 2
 
 // Drop cache entries older than this on read. Background revalidation refreshes
 // stale-but-valid entries; this guard prevents truly ancient data (an account
