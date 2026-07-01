@@ -52,8 +52,6 @@ const MUSCLE_HEX: Record<string, [string, string]> = {
 
 const slugify = (s: string) => s.replace(/\s+/g, "-").toLowerCase()
 
-type ProgressMetric = "est1rm" | "volume"
-
 export function Stats({ initialTab }: { initialTab?: string } = {}) {
   const { data: personalRecords } = usePersonalRecords()
   const { data: stats } = useStats()
@@ -318,10 +316,6 @@ function ProgressTab({
 }: { trained: TrainedExercise[]; chart: ChartTheme }) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = React.useState(false)
-  // Both metrics are rep-aware (est. 1RM and volume both climb as reps grow at
-  // a fixed weight) — there is deliberately no raw top-weight option, which
-  // would sit flat exactly when the user is progressing via reps.
-  const [metric, setMetric] = React.useState<ProgressMetric>("est1rm")
   const [openWorkoutId, setOpenWorkoutId] = React.useState<string | null>(null)
 
   React.useEffect(() => {
@@ -346,22 +340,16 @@ function ProgressTab({
     date: new Date(p.date).getTime(),
     label: shortDate(p.date),
     est1rm: p.est1RM,
-    volume: p.volume,
     topweight: p.topWeight,
     topReps: p.topReps,
-    totalSets: p.totalSets,
   }))
 
   const latest = points[points.length - 1]
   const first = points[0]
-  const metricLabel = metric === "est1rm" ? "Est. 1RM" : "Volume"
+  const metricLabel = "Est. 1RM"
   const metricUnit = "kg"
-  const latestValue = latest
-    ? metric === "est1rm" ? latest.est1RM : latest.volume
-    : 0
-  const firstValue = first
-    ? metric === "est1rm" ? first.est1RM : first.volume
-    : 0
+  const latestValue = latest ? latest.est1RM : 0
+  const firstValue = first ? first.est1RM : 0
   const delta = latestValue - firstValue
   const deltaPct = firstValue > 0 ? (delta / firstValue) * 100 : 0
 
@@ -395,23 +383,6 @@ function ProgressTab({
         <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
       </button>
 
-      {/* Metric toggle */}
-      <div className="flex flex-col gap-1.5">
-        <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-secondary/60 p-1 ring-inset-border">
-          <MetricChip active={metric === "est1rm"} onClick={() => setMetric("est1rm")}>
-            Est. 1RM
-          </MetricChip>
-          <MetricChip active={metric === "volume"} onClick={() => setMetric("volume")}>
-            Volume
-          </MetricChip>
-        </div>
-        <p className="px-1 text-[10px] leading-tight text-muted-foreground">
-          {metric === "est1rm"
-            ? "Best set scored as an estimated 1RM — climbs as you add reps at the same weight."
-            : "Total weight moved (weight × reps, every set) — climbs as you add reps at the same weight."}
-        </p>
-      </div>
-
       {/* Chart card */}
       <Card className="p-4">
         {loading ? (
@@ -433,9 +404,7 @@ function ProgressTab({
                 </p>
                 {latest && (
                   <p className="num mt-0.5 text-[11px] text-muted-foreground">
-                    {metric === "est1rm"
-                      ? `${latest.topWeight}kg × ${latest.topReps} · est. 1RM`
-                      : `${latest.totalSets} ${latest.totalSets === 1 ? "set" : "sets"} · top ${latest.topWeight}kg × ${latest.topReps}`}
+                    {latest.topWeight}kg × {latest.topReps} · Top set
                   </p>
                 )}
               </div>
@@ -467,15 +436,7 @@ function ProgressTab({
                       tick={{ fill: chart.tick, fontSize: 10 }}
                       axisLine={false}
                       tickLine={false}
-                      tickFormatter={(v: number) =>
-                        v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${v}`
-                      }
-                      // Proportional padding so both small (est. 1RM ~120) and
-                      // large (volume ~3000) ranges get sensible headroom.
-                      domain={[
-                        (min: number) => Math.max(0, Math.floor(min - Math.abs(min) * 0.06)),
-                        (max: number) => Math.ceil(max + Math.abs(max) * 0.06),
-                      ]}
+                      domain={["dataMin - 5", "dataMax + 5"]}
                     />
                     <Tooltip
                       cursor={{ stroke: "#3b82f6", strokeDasharray: 3 }}
@@ -484,19 +445,13 @@ function ProgressTab({
                       itemStyle={{ color: chart.tooltipText }}
                       formatter={(v, _n, entry: any) => {
                         const p = entry?.payload
-                        // Surface the sets behind the number: the top set for
-                        // est. 1RM, the set count for volume.
-                        const detail = p
-                          ? metric === "est1rm"
-                            ? ` · ${p.topweight}kg × ${p.topReps}`
-                            : ` · ${p.totalSets} sets`
-                          : ""
-                        return [`${Number(v).toLocaleString()} ${metricUnit}${detail}`, metricLabel]
+                        const detail = p ? ` · ${p.topweight}kg × ${p.topReps}` : ""
+                        return [`${v as number} ${metricUnit}${detail}`, metricLabel]
                       }}
                     />
                     <Line
                       type="monotone"
-                      dataKey={metric}
+                      dataKey="est1rm"
                       stroke="url(#progGrad)"
                       strokeWidth={3}
                       dot={{ fill: "#3b82f6", r: 3 }}
@@ -665,24 +620,6 @@ function tooltipStyle(chart: ChartTheme) {
     boxShadow: chart.tooltipShadow,
     color: chart.tooltipText,
   }
-}
-
-function MetricChip({
-  active, onClick, children,
-}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
-        active
-          ? "bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground"
-      )}
-    >
-      {children}
-    </button>
-  )
 }
 
 function PeriodChip({
