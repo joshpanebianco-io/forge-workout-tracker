@@ -168,6 +168,8 @@ function ActiveSession({
   const [logs, setLogs] = React.useState<ExerciseLog[]>(workout.exercises)
   const [title, setTitle] = React.useState(workout.title)
   const [finishing, setFinishing] = React.useState(false)
+  const [confirmFinish, setConfirmFinish] = React.useState(false)
+  const [finishError, setFinishError] = React.useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = React.useState(false)
   const [pickerAdding, setPickerAdding] = React.useState(false)
   const [editSet, setEditSet] = React.useState<{ set: SetEntry; exerciseName: string } | null>(null)
@@ -274,10 +276,21 @@ function ActiveSession({
     )
   }, [])
 
+  // Per-exercise in-flight guard: a double-tap can fire two adds before logs
+  // (and logsRef) commit, and both would compute the same set_number and
+  // collide on UNIQUE(workout_exercise_id, set_number). Drop the second tap.
+  const addingSetRef = React.useRef<Set<string>>(new Set())
+
   const handleAddSet = async (exId: string) => {
+    if (addingSetRef.current.has(exId)) return
     const log = logsRef.current.find((e) => e.id === exId)
     const last = log?.sets[log.sets.length - 1]
-    const setNumber = (log?.sets.length ?? 0) + 1
+    // Next set_number = max(existing)+1, NOT the array length. Deleting a
+    // non-last set leaves a gap (survivors keep their numbers), so length+1
+    // would reuse an occupied number and violate the UNIQUE constraint.
+    const setNumber =
+      (log?.sets.reduce((m, s) => Math.max(m, s.setNumber ?? 0), 0) ?? 0) + 1
+    addingSetRef.current.add(exId)
     try {
       const created = await addSet(
         exId,
@@ -289,18 +302,23 @@ function ActiveSession({
       )
     } catch (e) {
       console.error(e)
+    } finally {
+      addingSetRef.current.delete(exId)
     }
   }
 
   const handleFinish = async () => {
     setFinishing(true)
+    setFinishError(null)
     try {
       const elapsedSec = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
       const durationMin = Math.max(1, Math.round(elapsedSec / 60))
       await finishWorkout(workout.id, durationMin)
+      session.clearRest()
+      setConfirmFinish(false)
       onFinished()
-    } catch (e) {
-      console.error(e)
+    } catch (e: any) {
+      setFinishError(e?.message ?? "Failed to finish workout")
     } finally {
       setFinishing(false)
     }
@@ -316,6 +334,7 @@ function ActiveSession({
     setDiscardError(null)
     try {
       await discardWorkout(workout.id)
+      session.clearRest()
       setConfirmDiscard(false)
       onFinished()
     } catch (e: any) {
@@ -351,24 +370,25 @@ function ActiveSession({
   const handlePickExercises = async (picked: Exercise[]) => {
     setPickerAdding(true)
     try {
-      // Use a local counter for position. React batches state updates across
-      // the awaits in this loop, so logsRef.current.length never increments
-      // between iterations — every exercise would get the same position
-      // and the UNIQUE(workout_id, position) constraint on workout_exercises
-      // would silently fail every insert after the first (catch swallows
-      // the error, the user sees a partial add).
-      let position = logsRef.current.length
+      // Seed from max(existing position), NOT logs.length. Removing a non-last
+      // exercise leaves a gap below the max, so length+1 would collide with the
+      // surviving top exercise and trip UNIQUE(workout_id, position). The local
+      // counter then increments monotonically across a multi-pick (the awaited
+      // setLogs may not have committed before the next iteration, so we can't
+      // re-read logsRef mid-loop).
+      let position = logsRef.current.reduce((m, l) => Math.max(m, l.position ?? 0), 0)
       for (const ex of picked) {
         position += 1
+        const pos = position
         try {
           const { workoutExerciseId, initialSet } = await addExerciseToWorkout(
             workout.id,
             ex.id,
-            position,
+            pos,
           )
           setLogs((cur) => [
             ...cur,
-            { id: workoutExerciseId, exercise: ex, sets: [initialSet] },
+            { id: workoutExerciseId, position: pos, exercise: ex, sets: [initialSet] },
           ])
         } catch (e) {
           console.error(e)
@@ -510,7 +530,7 @@ function ActiveSession({
 
       {/* Finish */}
       <div className="px-5 pt-2">
-        <Button size="lg" className="w-full" onClick={handleFinish} disabled={finishing}>
+        <Button size="lg" className="w-full" onClick={() => setConfirmFinish(true)} disabled={finishing}>
           {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Finish workout"}
         </Button>
       </div>
@@ -534,6 +554,24 @@ function ActiveSession({
           onOpenChange={(o) => !o && setEditSet(null)}
           onPatched={handleSetPatched}
           onDeleted={handleSetDeletedFromSheet}
+        />
+      )}
+
+      {confirmFinish && (
+        <ConfirmDialog
+          open={confirmFinish}
+          onOpenChange={(o) => { setConfirmFinish(o); if (!o) setFinishError(null) }}
+          title="Finish workout?"
+          description={
+            completedSets < totalSets
+              ? `${completedSets} of ${totalSets} sets are marked done. Finishing will save and end the session.`
+              : "This will save and end your session."
+          }
+          confirmLabel="Finish"
+          tone="info"
+          busy={finishing}
+          error={finishError}
+          onConfirm={handleFinish}
         />
       )}
 

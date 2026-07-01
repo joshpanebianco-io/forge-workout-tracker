@@ -12,6 +12,11 @@ export type Exercise = {
 
 export type SetEntry = {
   id: string
+  // Server-assigned ordering key, unique per workout_exercise. The next set's
+  // number must be derived as max(setNumber)+1 — NOT the array length, which
+  // collides with a surviving row's number after a non-last set is deleted
+  // (violates UNIQUE(workout_exercise_id, set_number)).
+  setNumber: number
   weight: number
   reps: number
   rest?: number
@@ -21,6 +26,9 @@ export type SetEntry = {
 
 export type ExerciseLog = {
   id: string
+  // Server-assigned ordering key, unique per workout. Same rule as SetEntry:
+  // a new exercise's position is max(position)+1, not the array length.
+  position: number
   exercise: Exercise
   sets: SetEntry[]
   notes?: string
@@ -43,6 +51,10 @@ export type Routine = {
   schedule: string
   exercises: { exerciseId: string; sets: number; targetReps: string }[]
   color: string
+  // Server ordering key (UNIQUE per user). Carried so a new routine's position
+  // is derived as max(position)+1 rather than the list length, which collides
+  // with a survivor after a non-last routine is deleted.
+  position?: number
 }
 
 export type PR = {

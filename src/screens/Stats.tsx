@@ -318,7 +318,9 @@ function ProgressTab({
 }: { trained: TrainedExercise[]; chart: ChartTheme }) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = React.useState(false)
-  const [metric, setMetric] = React.useState<ProgressMetric>("topweight")
+  // Default to est. 1RM: unlike raw top weight, it rises when reps increase at
+  // the same weight, so progressive overload via reps is visible on the line.
+  const [metric, setMetric] = React.useState<ProgressMetric>("est1rm")
   const [openWorkoutId, setOpenWorkoutId] = React.useState<string | null>(null)
 
   React.useEffect(() => {
@@ -349,7 +351,7 @@ function ProgressTab({
 
   const latest = points[points.length - 1]
   const first = points[0]
-  const metricLabel = metric === "est1rm" ? "Est. 1RM" : "Top set"
+  const metricLabel = metric === "est1rm" ? "Est. 1RM" : "Top weight"
   const metricUnit = "kg"
   const latestValue = latest
     ? metric === "est1rm" ? latest.est1RM : latest.topWeight
@@ -391,13 +393,20 @@ function ProgressTab({
       </button>
 
       {/* Metric toggle */}
-      <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-secondary/60 p-1 ring-inset-border">
-        <MetricChip active={metric === "topweight"} onClick={() => setMetric("topweight")}>
-          Top set
-        </MetricChip>
-        <MetricChip active={metric === "est1rm"} onClick={() => setMetric("est1rm")}>
-          Est. 1RM
-        </MetricChip>
+      <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-secondary/60 p-1 ring-inset-border">
+          <MetricChip active={metric === "est1rm"} onClick={() => setMetric("est1rm")}>
+            Est. 1RM
+          </MetricChip>
+          <MetricChip active={metric === "topweight"} onClick={() => setMetric("topweight")}>
+            Top weight
+          </MetricChip>
+        </div>
+        <p className="px-1 text-[10px] leading-tight text-muted-foreground">
+          {metric === "est1rm"
+            ? "Estimated 1-rep max — rises when you add reps at the same weight."
+            : "Heaviest weight per session — hover a point to see that day's reps."}
+        </p>
       </div>
 
       {/* Chart card */}
@@ -460,7 +469,13 @@ function ProgressTab({
                       contentStyle={tooltipStyle(chart)}
                       labelStyle={{ color: chart.tooltipText }}
                       itemStyle={{ color: chart.tooltipText }}
-                      formatter={(v) => [`${v as number} ${metricUnit}`, metricLabel]}
+                      formatter={(v, _n, entry: any) => {
+                        const p = entry?.payload
+                        // Always surface the underlying top set (weight × reps)
+                        // so rep gains are legible even on the flat top-weight line.
+                        const detail = p ? ` · ${p.topweight}kg × ${p.topReps}` : ""
+                        return [`${v as number} ${metricUnit}${detail}`, metricLabel]
+                      }}
                     />
                     <Line
                       type="monotone"

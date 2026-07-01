@@ -33,31 +33,34 @@ export const todayWorkout: Workout = {
   exercises: [
     {
       id: "el-1",
+      position: 1,
       exercise: exercises[0],
       sets: [
-        { id: "s1", weight: 60, reps: 10, done: true },
-        { id: "s2", weight: 80, reps: 8, done: true },
-        { id: "s3", weight: 100, reps: 8, done: true, isPR: true },
-        { id: "s4", weight: 100, reps: 7, done: true },
-        { id: "s5", weight: 100, reps: 6, done: false },
+        { id: "s1", setNumber: 1, weight: 60, reps: 10, done: true },
+        { id: "s2", setNumber: 2, weight: 80, reps: 8, done: true },
+        { id: "s3", setNumber: 3, weight: 100, reps: 8, done: true, isPR: true },
+        { id: "s4", setNumber: 4, weight: 100, reps: 7, done: true },
+        { id: "s5", setNumber: 5, weight: 100, reps: 6, done: false },
       ],
     },
     {
       id: "el-2",
+      position: 2,
       exercise: exercises[1],
       sets: [
-        { id: "s6", weight: 30, reps: 10, done: true },
-        { id: "s7", weight: 32.5, reps: 9, done: true },
-        { id: "s8", weight: 32.5, reps: 8, done: false },
+        { id: "s6", setNumber: 1, weight: 30, reps: 10, done: true },
+        { id: "s7", setNumber: 2, weight: 32.5, reps: 9, done: true },
+        { id: "s8", setNumber: 3, weight: 32.5, reps: 8, done: false },
       ],
     },
     {
       id: "el-3",
+      position: 3,
       exercise: exercises[4],
       sets: [
-        { id: "s9", weight: 50, reps: 8, done: false },
-        { id: "s10", weight: 50, reps: 8, done: false },
-        { id: "s11", weight: 50, reps: 8, done: false },
+        { id: "s9", setNumber: 1, weight: 50, reps: 8, done: false },
+        { id: "s10", setNumber: 2, weight: 50, reps: 8, done: false },
+        { id: "s11", setNumber: 3, weight: 50, reps: 8, done: false },
       ],
     },
   ],
@@ -68,36 +71,36 @@ export const recentWorkouts: Workout[] = [
   {
     id: "w-1", title: "Pull Day", date: iso(2), durationMin: 52, prCount: 0,
     exercises: [
-      { id: "p1", exercise: exercises[10], sets: Array.from({ length: 4 }, (_, i) => ({ id: `p1s${i}`, weight: 80, reps: 8, done: true })) },
-      { id: "p2", exercise: exercises[9], sets: Array.from({ length: 3 }, (_, i) => ({ id: `p2s${i}`, weight: 0, reps: 10, done: true })) },
-      { id: "p3", exercise: exercises[12], sets: Array.from({ length: 3 }, (_, i) => ({ id: `p3s${i}`, weight: 30, reps: 12, done: true })) },
+      { id: "p1", position: 1, exercise: exercises[10], sets: Array.from({ length: 4 }, (_, i) => ({ id: `p1s${i}`, setNumber: i + 1, weight: 80, reps: 8, done: true })) },
+      { id: "p2", position: 2, exercise: exercises[9], sets: Array.from({ length: 3 }, (_, i) => ({ id: `p2s${i}`, setNumber: i + 1, weight: 0, reps: 10, done: true })) },
+      { id: "p3", position: 3, exercise: exercises[12], sets: Array.from({ length: 3 }, (_, i) => ({ id: `p3s${i}`, setNumber: i + 1, weight: 30, reps: 12, done: true })) },
     ],
   },
   {
     id: "w-2", title: "Leg Day", date: iso(4), durationMin: 64, prCount: 2,
     exercises: [
-      { id: "l1", exercise: exercises[6], sets: Array.from({ length: 5 }, (_, i) => ({ id: `l1s${i}`, weight: 120, reps: 5, done: true, isPR: i === 2 })) },
-      { id: "l2", exercise: exercises[7], sets: Array.from({ length: 4 }, (_, i) => ({ id: `l2s${i}`, weight: 100, reps: 8, done: true })) },
-      { id: "l3", exercise: exercises[8], sets: Array.from({ length: 3 }, (_, i) => ({ id: `l3s${i}`, weight: 200, reps: 10, done: true })) },
+      { id: "l1", position: 1, exercise: exercises[6], sets: Array.from({ length: 5 }, (_, i) => ({ id: `l1s${i}`, setNumber: i + 1, weight: 120, reps: 5, done: true, isPR: i === 2 })) },
+      { id: "l2", position: 2, exercise: exercises[7], sets: Array.from({ length: 4 }, (_, i) => ({ id: `l2s${i}`, setNumber: i + 1, weight: 100, reps: 8, done: true })) },
+      { id: "l3", position: 3, exercise: exercises[8], sets: Array.from({ length: 3 }, (_, i) => ({ id: `l3s${i}`, setNumber: i + 1, weight: 200, reps: 10, done: true })) },
     ],
   },
   {
     id: "w-3", title: "Push Day", date: iso(7), durationMin: 45, prCount: 1,
     exercises: [
-      { id: "h1", exercise: exercises[0], sets: Array.from({ length: 4 }, (_, i) => ({ id: `h1s${i}`, weight: 95, reps: 8, done: true })) },
-      { id: "h2", exercise: exercises[1], sets: Array.from({ length: 3 }, (_, i) => ({ id: `h2s${i}`, weight: 30, reps: 10, done: true })) },
+      { id: "h1", position: 1, exercise: exercises[0], sets: Array.from({ length: 4 }, (_, i) => ({ id: `h1s${i}`, setNumber: i + 1, weight: 95, reps: 8, done: true })) },
+      { id: "h2", position: 2, exercise: exercises[1], sets: Array.from({ length: 3 }, (_, i) => ({ id: `h2s${i}`, setNumber: i + 1, weight: 30, reps: 10, done: true })) },
     ],
   },
   {
     id: "w-4", title: "Pull Day", date: iso(9), durationMin: 50, prCount: 0,
     exercises: [
-      { id: "pp1", exercise: exercises[10], sets: Array.from({ length: 4 }, (_, i) => ({ id: `pp1s${i}`, weight: 80, reps: 8, done: true })) },
+      { id: "pp1", position: 1, exercise: exercises[10], sets: Array.from({ length: 4 }, (_, i) => ({ id: `pp1s${i}`, setNumber: i + 1, weight: 80, reps: 8, done: true })) },
     ],
   },
   {
     id: "w-5", title: "Leg Day", date: iso(11), durationMin: 58, prCount: 0,
     exercises: [
-      { id: "ll1", exercise: exercises[6], sets: Array.from({ length: 4 }, (_, i) => ({ id: `ll1s${i}`, weight: 115, reps: 6, done: true })) },
+      { id: "ll1", position: 1, exercise: exercises[6], sets: Array.from({ length: 4 }, (_, i) => ({ id: `ll1s${i}`, setNumber: i + 1, weight: 115, reps: 6, done: true })) },
     ],
   },
 ]
