@@ -351,7 +351,7 @@ function ProgressTab({
 
   const latest = points[points.length - 1]
   const first = points[0]
-  const metricLabel = metric === "est1rm" ? "Est. 1RM" : "Top weight"
+  const metricLabel = metric === "est1rm" ? "Top set" : "Top weight"
   const metricUnit = "kg"
   const latestValue = latest
     ? metric === "est1rm" ? latest.est1RM : latest.topWeight
@@ -396,7 +396,7 @@ function ProgressTab({
       <div className="flex flex-col gap-1.5">
         <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-secondary/60 p-1 ring-inset-border">
           <MetricChip active={metric === "est1rm"} onClick={() => setMetric("est1rm")}>
-            Est. 1RM
+            Top set
           </MetricChip>
           <MetricChip active={metric === "topweight"} onClick={() => setMetric("topweight")}>
             Top weight
@@ -404,8 +404,8 @@ function ProgressTab({
         </div>
         <p className="px-1 text-[10px] leading-tight text-muted-foreground">
           {metric === "est1rm"
-            ? "Estimated 1-rep max — rises when you add reps at the same weight."
-            : "Heaviest weight per session — hover a point to see that day's reps."}
+            ? "Best set scored as an estimated 1RM — climbs as you add reps at the same weight."
+            : "Heaviest weight lifted per session — stays flat while the weight holds; hover for that day's reps."}
         </p>
       </div>
 
@@ -431,6 +431,7 @@ function ProgressTab({
                 {latest && (
                   <p className="num mt-0.5 text-[11px] text-muted-foreground">
                     {latest.topWeight}kg × {latest.topReps}
+                    {metric === "est1rm" && " · est. 1RM"}
                   </p>
                 )}
               </div>
