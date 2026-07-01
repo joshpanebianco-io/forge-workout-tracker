@@ -52,7 +52,7 @@ const MUSCLE_HEX: Record<string, [string, string]> = {
 
 const slugify = (s: string) => s.replace(/\s+/g, "-").toLowerCase()
 
-type ProgressMetric = "est1rm" | "topweight"
+type ProgressMetric = "est1rm" | "volume"
 
 export function Stats({ initialTab }: { initialTab?: string } = {}) {
   const { data: personalRecords } = usePersonalRecords()
@@ -318,8 +318,9 @@ function ProgressTab({
 }: { trained: TrainedExercise[]; chart: ChartTheme }) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = React.useState(false)
-  // Default to est. 1RM: unlike raw top weight, it rises when reps increase at
-  // the same weight, so progressive overload via reps is visible on the line.
+  // Both metrics are rep-aware (est. 1RM and volume both climb as reps grow at
+  // a fixed weight) — there is deliberately no raw top-weight option, which
+  // would sit flat exactly when the user is progressing via reps.
   const [metric, setMetric] = React.useState<ProgressMetric>("est1rm")
   const [openWorkoutId, setOpenWorkoutId] = React.useState<string | null>(null)
 
@@ -345,19 +346,21 @@ function ProgressTab({
     date: new Date(p.date).getTime(),
     label: shortDate(p.date),
     est1rm: p.est1RM,
+    volume: p.volume,
     topweight: p.topWeight,
     topReps: p.topReps,
+    totalSets: p.totalSets,
   }))
 
   const latest = points[points.length - 1]
   const first = points[0]
-  const metricLabel = metric === "est1rm" ? "Top set" : "Top weight"
+  const metricLabel = metric === "est1rm" ? "Est. 1RM" : "Volume"
   const metricUnit = "kg"
   const latestValue = latest
-    ? metric === "est1rm" ? latest.est1RM : latest.topWeight
+    ? metric === "est1rm" ? latest.est1RM : latest.volume
     : 0
   const firstValue = first
-    ? metric === "est1rm" ? first.est1RM : first.topWeight
+    ? metric === "est1rm" ? first.est1RM : first.volume
     : 0
   const delta = latestValue - firstValue
   const deltaPct = firstValue > 0 ? (delta / firstValue) * 100 : 0
@@ -396,16 +399,16 @@ function ProgressTab({
       <div className="flex flex-col gap-1.5">
         <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-secondary/60 p-1 ring-inset-border">
           <MetricChip active={metric === "est1rm"} onClick={() => setMetric("est1rm")}>
-            Top set
+            Est. 1RM
           </MetricChip>
-          <MetricChip active={metric === "topweight"} onClick={() => setMetric("topweight")}>
-            Top weight
+          <MetricChip active={metric === "volume"} onClick={() => setMetric("volume")}>
+            Volume
           </MetricChip>
         </div>
         <p className="px-1 text-[10px] leading-tight text-muted-foreground">
           {metric === "est1rm"
             ? "Best set scored as an estimated 1RM — climbs as you add reps at the same weight."
-            : "Heaviest weight lifted per session — stays flat while the weight holds; hover for that day's reps."}
+            : "Total weight moved (weight × reps, every set) — climbs as you add reps at the same weight."}
         </p>
       </div>
 
@@ -425,13 +428,14 @@ function ProgressTab({
                   {metricLabel}
                 </p>
                 <p className="num mt-1 text-2xl font-bold">
-                  {latestValue}
+                  {latestValue.toLocaleString()}
                   <span className="ml-1 text-base text-muted-foreground">{metricUnit}</span>
                 </p>
                 {latest && (
                   <p className="num mt-0.5 text-[11px] text-muted-foreground">
-                    {latest.topWeight}kg × {latest.topReps}
-                    {metric === "est1rm" && " · est. 1RM"}
+                    {metric === "est1rm"
+                      ? `${latest.topWeight}kg × ${latest.topReps} · est. 1RM`
+                      : `${latest.totalSets} ${latest.totalSets === 1 ? "set" : "sets"} · top ${latest.topWeight}kg × ${latest.topReps}`}
                   </p>
                 )}
               </div>
@@ -463,7 +467,15 @@ function ProgressTab({
                       tick={{ fill: chart.tick, fontSize: 10 }}
                       axisLine={false}
                       tickLine={false}
-                      domain={["dataMin - 5", "dataMax + 5"]}
+                      tickFormatter={(v: number) =>
+                        v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${v}`
+                      }
+                      // Proportional padding so both small (est. 1RM ~120) and
+                      // large (volume ~3000) ranges get sensible headroom.
+                      domain={[
+                        (min: number) => Math.max(0, Math.floor(min - Math.abs(min) * 0.06)),
+                        (max: number) => Math.ceil(max + Math.abs(max) * 0.06),
+                      ]}
                     />
                     <Tooltip
                       cursor={{ stroke: "#3b82f6", strokeDasharray: 3 }}
@@ -472,10 +484,14 @@ function ProgressTab({
                       itemStyle={{ color: chart.tooltipText }}
                       formatter={(v, _n, entry: any) => {
                         const p = entry?.payload
-                        // Always surface the underlying top set (weight × reps)
-                        // so rep gains are legible even on the flat top-weight line.
-                        const detail = p ? ` · ${p.topweight}kg × ${p.topReps}` : ""
-                        return [`${v as number} ${metricUnit}${detail}`, metricLabel]
+                        // Surface the sets behind the number: the top set for
+                        // est. 1RM, the set count for volume.
+                        const detail = p
+                          ? metric === "est1rm"
+                            ? ` · ${p.topweight}kg × ${p.topReps}`
+                            : ` · ${p.totalSets} sets`
+                          : ""
+                        return [`${Number(v).toLocaleString()} ${metricUnit}${detail}`, metricLabel]
                       }}
                     />
                     <Line
@@ -734,7 +750,7 @@ function DeltaPill({ value, pct, unit }: { value: number; pct: number; unit: str
         color
       )}>
         <Icon className="h-3 w-3" />
-        {positive ? "+" : ""}{value}{unit} · {positive ? "+" : ""}{pct.toFixed(1)}%
+        {positive ? "+" : ""}{value.toLocaleString()}{unit} · {positive ? "+" : ""}{pct.toFixed(1)}%
       </span>
       <p className="mt-1 text-[10px] text-muted-foreground">since first workout</p>
     </div>
