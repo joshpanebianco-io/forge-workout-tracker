@@ -828,6 +828,10 @@ export type ProgressPoint = {
   topReps: number
   est1RM: number
   totalSets: number
+  // Total weight moved this session = sum of weight*reps over done sets. Rises
+  // with reps at a fixed weight, so it captures rep progress the raw top-weight
+  // line can't.
+  volume: number
 }
 
 function estimated1RM(weight: number, reps: number) {
@@ -864,12 +868,14 @@ export function useExerciseProgress(exerciseId: string | null) {
       let topReps = 0
       let topEst = 0
       let totalSets = 0
+      let volume = 0
       for (const s of we.sets ?? []) {
         if (!s.done) continue
         const w = Number(s.weight_kg)
         const r = s.reps
         if (w <= 0 || r <= 0) continue
         totalSets += 1
+        volume += w * r
         // Top set = heaviest weight, tie-break by reps.
         if (w > topWeight || (w === topWeight && r > topReps)) {
           topWeight = w
@@ -887,6 +893,7 @@ export function useExerciseProgress(exerciseId: string | null) {
         topReps,
         est1RM: Math.round(topEst),
         totalSets,
+        volume: Math.round(volume),
       })
     }
     points.sort((a, b) => (a.date > b.date ? 1 : -1))
