@@ -32,6 +32,24 @@ Build routines, log every set, and watch your estimated 1RM climb. Installable a
 
 ---
 
+## Install it on your phone
+
+Forge is a PWA, so there's no app store — you install it straight from the browser and it behaves like a native app: its own home-screen icon and fullscreen with no browser chrome.
+
+Open **[forge-workout-io.vercel.app](https://forge-workout-io.vercel.app/)** on your phone, then:
+
+| Device | Steps |
+|---|---|
+| **iPhone / iPad** | In **Safari**, tap the **Share** button at the bottom → scroll down → **Add to Home Screen** → **Add**. |
+| **Android** | In **Chrome**, tap the **⋮** menu (top right) → **Install app** (or **Add to Home screen**) → **Install**. |
+| **Desktop** | In Chrome or Edge, click the **install icon** at the right of the address bar → **Install**. |
+
+> On iOS this only works in Safari — the Add to Home Screen option won't appear in other browsers.
+
+Launch it from your home screen from then on. To update, pull up *Profile → Check for updates*.
+
+---
+
 ## Features
 
 ### Train
