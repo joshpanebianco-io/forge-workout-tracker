@@ -4,9 +4,11 @@
 
 # Forge
 
-**An offline-first workout tracker built as an installable PWA.**
+**A workout tracker for people who actually lift.**
 
-Log every set at the rack, watch your estimated 1RM climb, and never lose a session to bad gym reception.
+Build routines, log every set, and watch your estimated 1RM climb. Installable as a PWA on any phone.
+
+### [→ Try it live](https://forge-workout-io.vercel.app/)
 
 <p>
   <img alt="React" src="https://img.shields.io/badge/React-19-087EA4?logo=react&logoColor=white" />
@@ -27,16 +29,6 @@ Log every set at the rack, watch your estimated 1RM climb, and never lose a sess
 </table>
 
 </div>
-
----
-
-## Why Forge
-
-Most tracking apps assume a connection. Gyms are basements. Forge is built the other way around: **every read is served from a local cache and every write is queued locally first**, so logging sets works identically whether you have five bars of signal or none. When you walk back into range, the queue drains in the background and the server catches up.
-
-- **No spinners between sets.** Set toggles, weight edits and added sets apply optimistically.
-- **Survives a kill.** Active session state, rest timers and pending writes are persisted, so force-quitting mid-workout loses nothing.
-- **Real progress signal.** Per-exercise estimated 1RM over time, sets-per-muscle balance, and automatic PR detection.
 
 ---
 
@@ -63,12 +55,11 @@ Most tracking apps assume a connection. Gyms are basements. Forge is built the o
 | **Progress** | Pick any trained exercise and chart its estimated 1RM over time, with total gain since your first session. |
 | **Personal records** | PRs recorded automatically per exercise from weight × reps, surfaced on Home and in Stats. |
 
-### Live in it
+### Platform
 
 | | |
 |---|---|
 | **Installable** | Standalone PWA with maskable icons, precached app shell and a prompt-to-update service worker. |
-| **Offline-first** | IndexedDB read cache plus a replayable mutation queue (see [Architecture](#architecture)). |
 | **Appearance** | Light, dark or follow-system. |
 | **Accounts** | Email + password or Google OAuth, with per-user row-level security and cache eviction on account switch. |
 
@@ -107,38 +98,22 @@ Most tracking apps assume a connection. Gyms are basements. Forge is built the o
 | Icons | lucide-react |
 | Drag & drop | dnd-kit (routine and exercise ordering) |
 | Backend | Supabase — Postgres, Auth, row-level security |
-| Offline | IndexedDB (`src/lib/idb.ts`) for cache + mutation queue |
+| Persistence | IndexedDB (`src/lib/idb.ts`) for cache + mutation queue |
 | PWA | vite-plugin-pwa / Workbox |
 
 ---
 
 ## Architecture
 
-### Reads — cache first, network second
+### Data layer
 
-`src/lib/api.ts` exposes one hook per view (`useStats`, `useRecentWorkouts`, `useExerciseProgress`, …). Each one:
+`src/lib/api.ts` exposes one hook per view (`useStats`, `useRecentWorkouts`, `useExerciseProgress`, …). Reads hit an in-memory cache, fall back to a versioned IndexedDB cache (`src/lib/cache.ts`), and revalidate from Supabase in the background. Cache keys are namespaced per user id, so signing out or switching accounts evicts the previous user's entries.
 
-1. Serves the in-memory cache instantly if it's warm.
-2. Falls back to the versioned IndexedDB cache (`src/lib/cache.ts`) — user-scoped keys, a schema version, and a 30-day max age so nothing ancient renders on launch.
-3. Revalidates from Supabase in the background when online.
-
-Cache keys are namespaced per user id, and signing out or switching accounts evicts the previous user's entries — two accounts on one device can never see each other's data.
-
-### Writes — one code path, online or off
-
-`src/lib/mutation-queue.ts` is a persisted, replayable queue. Every mutation serializes to a plain payload with no closures or React state, which means it survives a reload and can be replayed by a fresh client after the original tab is gone.
-
-```
-mutate() ──online──▶ execute() ──▶ Supabase
-   │                    ▲
-   └─offline─▶ queue ───┘  drained on reconnect / cold start
-```
-
-Online and offline writes run through the *same* `execute()` function, so a mutation that drains twenty minutes later behaves exactly as it would have in the foreground — no behavioural drift between the two paths. Inserts pre-generate their UUIDs client-side, so optimistic UI knows row ids immediately and foreign keys between queued rows stay consistent. Failed entries retry up to five times before being surfaced.
+Writes go through `src/lib/mutation-queue.ts`, a persisted queue that applies changes optimistically and reconciles with the server. Each mutation serializes to a plain payload — no closures, no React state — so it survives a reload and can be replayed by a fresh client. Inserts pre-generate their UUIDs client-side, which keeps optimistic UI and foreign keys between queued rows consistent. Failed entries retry up to five times before surfacing.
 
 ### Service worker
 
-Supabase REST and auth requests are explicitly `NetworkOnly`. That's deliberate: offline reads are already handled by the app-level cache, and letting the SW serve a stale pre-mutation snapshot after reconnect would silently overwrite optimistic state — a freshly finished workout would vanish from History. Fonts and static assets use stale-while-revalidate; the app shell is precached. Updates use `registerType: 'prompt'`, surfaced through *Profile → Check for updates*.
+The app shell is precached; fonts and static assets use stale-while-revalidate. Supabase REST and auth requests are deliberately `NetworkOnly` — letting the SW serve a stale pre-mutation snapshot would overwrite optimistic state (a freshly finished workout would vanish from History). Updates use `registerType: 'prompt'`, surfaced through *Profile → Check for updates*.
 
 ### Data model
 
@@ -223,7 +198,7 @@ src/
 │   └── *Sheet.tsx           bottom-sheet flows (routines, exercises, sets, …)
 └── lib/
     ├── api.ts               all Supabase queries + data hooks
-    ├── mutation-queue.ts    persisted offline write queue
+    ├── mutation-queue.ts    persisted write queue
     ├── cache.ts             versioned, user-scoped IndexedDB read cache
     ├── idb.ts               thin IndexedDB wrapper
     ├── session.tsx          active-session + rest-timer state
